@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:zip": "node scripts/make_zip.cjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },

@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-const rootDir = __dirname;
+const rootDir = path.resolve(__dirname, '..');
 const releaseDir = path.join(rootDir, 'release', 'Shiori-AI-Japanese-Tutor');
 const zipFile = path.join(rootDir, 'Shiori-AI-Japanese-Tutor_v0.1.1.zip');
 const cnZipFile = path.join(rootDir, '栞-Shiori-AI日语私教_v0.1.1.zip');

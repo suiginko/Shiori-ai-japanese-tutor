@@ -2,21 +2,42 @@ const fs = require('fs');
 const ts = require('typescript');
 const path = require('path');
 
+function resolvePath(p) {
+  if (fs.existsSync(p)) return p;
+  if (fs.existsSync(p + '.ts')) return p + '.ts';
+  if (fs.existsSync(p + '.tsx')) return p + '.tsx';
+  const rootRelative = path.resolve(__dirname, '..', p);
+  if (fs.existsSync(rootRelative)) return rootRelative;
+  if (fs.existsSync(rootRelative + '.ts')) return rootRelative + '.ts';
+  if (fs.existsSync(rootRelative + '.tsx')) return rootRelative + '.tsx';
+  return p;
+}
+
+const moduleCache = {};
+
 function requireTs(filePath) {
-  const code = fs.readFileSync(filePath, 'utf8');
+  const actualPath = resolvePath(filePath);
+  if (moduleCache[actualPath]) {
+    return moduleCache[actualPath].exports;
+  }
+  const code = fs.readFileSync(actualPath, 'utf8');
   const js = ts.transpileModule(code, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React }
   }).outputText;
   const m = { exports: {} };
+  moduleCache[actualPath] = m;
   const fn = new Function('require', 'module', 'exports', '__dirname', '__filename', js);
   fn((id) => {
     if (id.startsWith('.')) {
-      const p = path.resolve(path.dirname(filePath), id);
-      const candidate = fs.existsSync(p + '.ts') ? p + '.ts' : p;
+      const p = path.resolve(path.dirname(actualPath), id);
+      const candidate = resolvePath(p);
       return requireTs(candidate);
     }
+    if (id === 'react') {
+      return { createElement: () => null, Fragment: 'Fragment' };
+    }
     return require(id);
-  }, m, m.exports, path.dirname(filePath), filePath);
+  }, m, m.exports, path.dirname(actualPath), actualPath);
   return m.exports;
 }
 
