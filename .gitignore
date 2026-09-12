@@ -15,6 +15,12 @@ dist
 dist-ssr
 release/
 *.zip
+*.apk
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+android/app/src/main/assets/public/
 
 # Local environment & secrets
 .env
