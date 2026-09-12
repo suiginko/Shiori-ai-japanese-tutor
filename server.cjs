@@ -312,7 +312,7 @@ function startServer(port) {
     const url = `http://localhost:${port}`;
 
     console.log(`\n======================================================`);
-    console.log(`  🌸 栞 (Shiori) - AI 日语智能私教系统 已就绪！`);
+    console.log(`  🔖 栞 (Shiori) - AI 日语智能私教系统 已就绪！`);
     console.log(`======================================================`);
     console.log(`  本地访问地址: ${url}`);
     console.log(`  如浏览器未自动弹出，请在浏览器中手动打开上述网址。`);

@@ -33,7 +33,7 @@ if (-not $listener -or -not $listener.IsListening) {
 $url = "http://localhost:$port/"
 Write-Host ""
 Write-Host "======================================================" -ForegroundColor Cyan
-Write-Host "  🌸 栞 (Shiori) - AI 日语智能私教系统 已就绪! " -ForegroundColor Green
+Write-Host "  🔖 栞 (Shiori) - AI 日语智能私教系统 已就绪! " -ForegroundColor Green
 Write-Host "======================================================" -ForegroundColor Cyan
 Write-Host "  本地运行地址: $url" -ForegroundColor Yellow
 Write-Host "  正在为您自动打开浏览器..." -ForegroundColor Gray

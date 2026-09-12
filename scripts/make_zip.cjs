@@ -48,7 +48,7 @@ const shContent = `#!/usr/bin/env bash
 cd "$(dirname "$0")"
 
 echo "======================================================"
-echo "   🌸 正在启动「栞 (Shiori)」AI 日语自适应智能私教..."
+echo "   🔖 正在启动「栞 (Shiori)」AI 日语自适应智能私教..."
 echo "======================================================"
 
 if command -v node >/dev/null 2>&1; then

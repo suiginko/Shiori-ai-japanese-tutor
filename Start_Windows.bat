@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title 栞 (Shiori) - AI 日语智能私教 (v0.1.1)
+title 🔖 栞 (Shiori) - AI 日语智能私教 (v0.1.1)
 
 where node >nul 2>nul
 if %errorlevel% equ 0 (
