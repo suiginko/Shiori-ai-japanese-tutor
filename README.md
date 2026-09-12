@@ -35,7 +35,7 @@
 ## 🚀 快速启动
 
 ### 方式一：面向普通用户（开箱即用，无需 Node.js）
-1. 前往本仓库的 [Releases](https://github.com/suiginko/Shiori-ai-japanese-tutor/releases) 页面，下载最新的发布压缩包。
+1. 下载最新的发布压缩包。
 2. 解压至任意文件夹。
 3. **Windows 用户**：双击运行 `Start_Windows.bat` 或 `双击启动.bat`。
 4. **macOS / Linux 用户**：终端运行 `bash "启动 (Mac-Linux).sh"`。
