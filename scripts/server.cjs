@@ -4,7 +4,9 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const PORT = 5273;
-const DIST_DIR = path.join(__dirname, 'dist');
+const DIST_DIR = fs.existsSync(path.join(__dirname, 'dist'))
+  ? path.join(__dirname, 'dist')
+  : path.join(__dirname, '..', 'dist');
 
 // Gemini 代理地址：可用环境变量 GEMINI_PROXY_URL 覆盖；设为 "none" 或空串则直连（不走代理）
 const envProxy = process.env.GEMINI_PROXY_URL;

@@ -5,9 +5,9 @@ title 🔖 栞 (Shiori) - AI 日语智能私教 (v0.1.1)
 
 where node >nul 2>nul
 if %errorlevel% equ 0 (
-    node server.cjs
+    node "%~dp0scripts\server.cjs"
 ) else (
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0server.ps1"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\server.ps1"
 )
 
 if %errorlevel% neq 0 (

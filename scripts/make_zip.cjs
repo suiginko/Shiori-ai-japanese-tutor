@@ -65,10 +65,10 @@ fi
 fs.writeFileSync(path.join(releaseDir, '启动_Mac_Linux.sh'), shContent, 'utf8');
 
 // 3. 复制 server.cjs, server.ps1, 使用说明.txt
-fs.copyFileSync(path.join(rootDir, 'server.cjs'), path.join(releaseDir, 'server.cjs'));
-fs.copyFileSync(path.join(rootDir, 'server.ps1'), path.join(releaseDir, 'server.ps1'));
-fs.copyFileSync(path.join(rootDir, '使用说明.txt'), path.join(releaseDir, '使用说明.txt'));
-fs.copyFileSync(path.join(rootDir, '使用说明.txt'), path.join(releaseDir, 'README.txt'));
+fs.copyFileSync(path.join(__dirname, 'server.cjs'), path.join(releaseDir, 'server.cjs'));
+fs.copyFileSync(path.join(__dirname, 'server.ps1'), path.join(releaseDir, 'server.ps1'));
+fs.copyFileSync(path.join(__dirname, '使用说明.txt'), path.join(releaseDir, '使用说明.txt'));
+fs.copyFileSync(path.join(__dirname, '使用说明.txt'), path.join(releaseDir, 'README.txt'));
 
 console.log('4. 正在压缩为 zip 压缩包 (PowerShell Compress-Archive)...');
 const psCommand = `powershell -NoProfile -Command "Compress-Archive -Path '${releaseDir}' -DestinationPath '${zipFile}' -Force"`;

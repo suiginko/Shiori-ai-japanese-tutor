@@ -7,7 +7,7 @@ echo "======================================================"
 
 if command -v node >/dev/null 2>&1; then
     echo "[状态] 检测到 Node.js，正在启动..."
-    node server.cjs
+    node scripts/server.cjs
 elif command -v python3 >/dev/null 2>&1; then
     echo "[状态] 检测到 Python3，正在启动本地服务..."
     cd dist && python3 -m http.server 5273

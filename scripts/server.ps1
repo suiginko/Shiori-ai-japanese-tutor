@@ -4,6 +4,10 @@ $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $distDir = Join-Path $PSScriptRoot "dist"
 if (-not (Test-Path $distDir)) {
+    $distDir = Join-Path (Split-Path -Parent $PSScriptRoot) "dist"
+}
+
+if (-not (Test-Path $distDir)) {
     Write-Host "[错误] 未找到 dist 目录，请确保解压完整! " -ForegroundColor Red
     Pause
     Exit

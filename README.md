@@ -37,8 +37,8 @@
 ### 方式一：面向普通用户（开箱即用，无需 Node.js）
 1. 下载最新的发布压缩包。
 2. 解压至任意文件夹。
-3. **Windows 用户**：双击运行 `Start_Windows.bat` 或 `双击启动.bat`。
-4. **macOS / Linux 用户**：终端运行 `bash "启动 (Mac-Linux).sh"`。
+3. **Windows 用户**：双击运行 `Start_Windows.bat`。
+4. **macOS / Linux 用户**：终端运行 `bash start_unix.sh`。
 5. 系统将自动在浏览器中打开 `http://localhost:5273`。
 
 ---
