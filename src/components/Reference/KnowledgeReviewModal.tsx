@@ -15,7 +15,6 @@ import {
   CheckCircle2,
   Clock,
   HelpCircle,
-  GraduationCap,
   Layers,
   Bookmark,
 } from 'lucide-react';
@@ -207,30 +206,6 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
     handleNextCard();
   };
 
-  const handleRequestAiQuiz = () => {
-    if (!onTriggerAiQuiz) return;
-    const reviewWordList = learnedWords
-      .filter((w) => w.mastery !== 'mastered')
-      .slice(0, 5)
-      .map((w) => `${w.surface}（${w.reading}）`);
-    const reviewGrammarList = learnedGrammar
-      .filter((g) => g.mastery !== 'mastered')
-      .slice(0, 3)
-      .map((g) => g.title);
-
-    let prompt = '老师，我想针对我最近学过的知识进行一次【专项强化测验】！';
-    if (reviewWordList.length > 0) {
-      prompt += `\n请针对我正在学习的单词：【${reviewWordList.join('、')}】`;
-    }
-    if (reviewGrammarList.length > 0) {
-      prompt += `\n以及语法点：【${reviewGrammarList.join('、')}】`;
-    }
-    prompt += '\n为我出一道结合日常场景的实用造句或选择填空题考考我，并用中文详细批改我的回答！';
-
-    onClose();
-    onTriggerAiQuiz(prompt);
-  };
-
   const renderMasteryBadge = (mastery: 'learning' | 'reviewing' | 'mastered', count: number) => {
     switch (mastery) {
       case 'mastered':
@@ -346,12 +321,6 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
               <span className="stat-progress-sub">已熟练掌握 {wordsMastered + grammarMastered} / {totalWords + totalGrammar} 项知识点</span>
             </div>
           </div>
-
-          <button className="ai-quiz-trigger-btn" onClick={handleRequestAiQuiz} title="将薄弱项整理并让 AI 私教生成测试题">
-            <GraduationCap size={16} />
-            <span className="quiz-btn-text-full">让 AI 私教考考我</span>
-            <span className="quiz-btn-text-short">AI 考考我</span>
-          </button>
         </div>
 
         {/* Action & Filter Bar */}
@@ -732,10 +701,16 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                           {word.detail && <p className="card-detail-tip">用法：{word.detail}</p>}
                           {word.exampleJp && (
                             <div className="card-example-tip">
-                              <span className="example-jp">
+                              <div className="example-jp">
                                 <RubyText content={word.exampleJp} interactive={false} ttsRate={ttsRate} />
-                              </span>
-                              {word.exampleCn && <span className="example-cn">（{word.exampleCn}）</span>}
+                              </div>
+                              {word.exampleCn && (
+                                <div className="example-cn">
+                                  {word.exampleCn.startsWith('（') || word.exampleCn.startsWith('(')
+                                    ? word.exampleCn
+                                    : `（${word.exampleCn}）`}
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
