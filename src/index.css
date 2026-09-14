@@ -82,14 +82,37 @@
   --bg-surface-subtle: #191919;
   --bg-surface-hover: #2c2c2c;
   
-  --border-subtle: #262626;
-  --border-light: #333333;
-  --border-strong: #4d4d4d;
+  --border-subtle: #2d2d2d;
+  --border-light: #3a3a3a;
+  --border-strong: #525252;
   
-  --text-primary: #f5f5f5;
-  --text-body: #e5e5e5;
-  --text-secondary: #a3a3a3;
-  --text-muted: #737373;
+  --text-primary: #f8fafc;
+  --text-body: #e2e8f0;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+
+  /* Primary wash & border overrides in dark mode */
+  --primary-wash: color-mix(in srgb, var(--primary, #e11d48) 18%, transparent);
+  --primary-border: color-mix(in srgb, var(--primary, #e11d48) 36%, transparent);
+
+  /* Indigo Accent in dark mode */
+  --indigo-accent: #818cf8;
+  --indigo-light: #a5b4fc;
+  --indigo-wash: rgba(99, 102, 241, 0.16);
+  --indigo-border: rgba(99, 102, 241, 0.35);
+
+  /* Bamboo Green (竹青) in dark mode */
+  --bamboo: #4ade80;
+  --bamboo-bg: rgba(34, 197, 94, 0.16);
+  --bamboo-border: rgba(34, 197, 94, 0.35);
+
+  /* Amber Gold (黄金) in dark mode */
+  --amber-gold: #fbbf24;
+  --amber-bg: rgba(245, 158, 11, 0.16);
+  --amber-border: rgba(245, 158, 11, 0.35);
+
+  /* Pitch Colors in dark mode */
+  --pitch-low-color: #94a3b8;
   
   --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
@@ -104,14 +127,32 @@
     --bg-surface-subtle: #191919;
     --bg-surface-hover: #2c2c2c;
     
-    --border-subtle: #262626;
-    --border-light: #333333;
-    --border-strong: #4d4d4d;
+    --border-subtle: #2d2d2d;
+    --border-light: #3a3a3a;
+    --border-strong: #525252;
     
-    --text-primary: #f5f5f5;
-    --text-body: #e5e5e5;
-    --text-secondary: #a3a3a3;
-    --text-muted: #737373;
+    --text-primary: #f8fafc;
+    --text-body: #e2e8f0;
+    --text-secondary: #cbd5e1;
+    --text-muted: #94a3b8;
+
+    --primary-wash: color-mix(in srgb, var(--primary, #e11d48) 18%, transparent);
+    --primary-border: color-mix(in srgb, var(--primary, #e11d48) 36%, transparent);
+
+    --indigo-accent: #818cf8;
+    --indigo-light: #a5b4fc;
+    --indigo-wash: rgba(99, 102, 241, 0.16);
+    --indigo-border: rgba(99, 102, 241, 0.35);
+
+    --bamboo: #4ade80;
+    --bamboo-bg: rgba(34, 197, 94, 0.16);
+    --bamboo-border: rgba(34, 197, 94, 0.35);
+
+    --amber-gold: #fbbf24;
+    --amber-bg: rgba(245, 158, 11, 0.16);
+    --amber-border: rgba(245, 158, 11, 0.35);
+
+    --pitch-low-color: #94a3b8;
     
     --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
     --shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
@@ -1048,18 +1089,18 @@ ruby.japanese-ruby-word {
 }
 
 .dark-mode .grammar-collected-hint,
-[data-theme='dark'] .grammar-collected-hint,
+[data-theme-mode="dark"] .grammar-collected-hint,
 .dark-mode .grammar-collected-hint.is-new,
-[data-theme='dark'] .grammar-collected-hint.is-new {
+[data-theme-mode="dark"] .grammar-collected-hint.is-new {
   background: rgba(255, 255, 255, 0.07);
   border-color: rgba(255, 255, 255, 0.12);
   color: #d4d4d4;
 }
 
 .dark-mode .grammar-collected-hint:hover,
-[data-theme='dark'] .grammar-collected-hint:hover,
+[data-theme-mode="dark"] .grammar-collected-hint:hover,
 .dark-mode .grammar-collected-hint.is-new:hover,
-[data-theme='dark'] .grammar-collected-hint.is-new:hover {
+[data-theme-mode="dark"] .grammar-collected-hint.is-new:hover {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.24);
   color: #f5f5f5;
@@ -1107,14 +1148,14 @@ ruby.japanese-ruby-word {
 }
 
 .dark-mode .word-collected-hint,
-[data-theme='dark'] .word-collected-hint {
+[data-theme-mode="dark"] .word-collected-hint {
   background: rgba(255, 255, 255, 0.07);
   border-color: rgba(255, 255, 255, 0.12);
   color: #d4d4d4;
 }
 
 .dark-mode .word-collected-hint:hover,
-[data-theme='dark'] .word-collected-hint:hover {
+[data-theme-mode="dark"] .word-collected-hint:hover {
   background: rgba(255, 255, 255, 0.12);
   border-color: rgba(255, 255, 255, 0.24);
   color: #f5f5f5;
@@ -2017,7 +2058,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .dark-mode .dict-pos-badge,
-[data-theme='dark'] .dict-pos-badge {
+[data-theme-mode="dark"] .dict-pos-badge {
   background: rgba(99, 102, 241, 0.18);
   color: #a5b4fc;
   border-color: rgba(99, 102, 241, 0.35);
@@ -2425,7 +2466,7 @@ ruby.ruby-item.furigana-hidden rt {
   animation: fadeInOut 0.25s ease-out;
 }
 
-[data-theme='dark'] .dict-synced-badge {
+[data-theme-mode="dark"] .dict-synced-badge {
   color: #34d399;
   background: rgba(16, 185, 129, 0.16);
   border-color: rgba(16, 185, 129, 0.35);
@@ -2653,13 +2694,13 @@ ruby.ruby-item.furigana-hidden rt {
 
 /* 暗黑模式适配 */
 .dark-mode .lookup-flow-track,
-[data-theme='dark'] .lookup-flow-track {
+[data-theme-mode="dark"] .lookup-flow-track {
   fill: rgba(129, 140, 248, 0.08);
   stroke: rgba(129, 140, 248, 0.28);
 }
 
 .dark-mode .lookup-flow-line,
-[data-theme='dark'] .lookup-flow-line {
+[data-theme-mode="dark"] .lookup-flow-line {
   stroke: #818cf8;
   filter: drop-shadow(0 0 4px rgba(129, 140, 248, 0.9)) drop-shadow(0 0 8px rgba(99, 102, 241, 0.45));
 }
@@ -3109,73 +3150,73 @@ body, .message-bubble, .bubble-content, .bubble-content-text, .chat-container-ma
 
 /* 非单词版式 · 深色适配 */
 .dark-mode .dict-query-text,
-[data-theme='dark'] .dict-query-text,
+[data-theme-mode="dark"] .dict-query-text,
 .dark-mode .dict-translation-text,
-[data-theme='dark'] .dict-translation-text {
+[data-theme-mode="dark"] .dict-translation-text {
   color: #f8fafc;
 }
 
 .dark-mode .dict-query-text.kind-grammar,
-[data-theme='dark'] .dict-query-text.kind-grammar {
+[data-theme-mode="dark"] .dict-query-text.kind-grammar {
   color: #a5b4fc;
 }
 
 .dark-mode .dict-query-reading,
-[data-theme='dark'] .dict-query-reading {
+[data-theme-mode="dark"] .dict-query-reading {
   color: #a5b4fc;
 }
 
 /* 标题振假名 · 深色适配（正文用亮色，读音用浅靛蓝保持层次） */
 .dark-mode .dict-query-text .dict-ruby-rt,
-[data-theme='dark'] .dict-query-text .dict-ruby-rt {
+[data-theme-mode="dark"] .dict-query-text .dict-ruby-rt {
   color: #a5b4fc;
 }
 
 .dark-mode .dict-translation-card,
-[data-theme='dark'] .dict-translation-card {
+[data-theme-mode="dark"] .dict-translation-card {
   background: rgba(99, 102, 241, 0.14);
   border-color: rgba(99, 102, 241, 0.3);
 }
 
 .dark-mode .dict-breakdown-item,
-[data-theme='dark'] .dict-breakdown-item {
+[data-theme-mode="dark"] .dict-breakdown-item {
   background: rgba(0, 0, 0, 0.22);
   border-color: rgba(255, 255, 255, 0.07);
 }
 
 .dark-mode .dict-bd-jp,
-[data-theme='dark'] .dict-bd-jp {
+[data-theme-mode="dark"] .dict-bd-jp {
   color: #f8fafc;
 }
 
 .dark-mode .dict-bd-zh,
-[data-theme='dark'] .dict-bd-zh {
+[data-theme-mode="dark"] .dict-bd-zh {
   color: #cbd5e1;
 }
 
 .dark-mode .dict-bd-role,
-[data-theme='dark'] .dict-bd-role {
+[data-theme-mode="dark"] .dict-bd-role {
   color: #a5b4fc;
   background: rgba(99, 102, 241, 0.2);
   border-color: rgba(99, 102, 241, 0.35);
 }
 
 .dark-mode .lookup-finish-highlight,
-[data-theme='dark'] .lookup-finish-highlight {
+[data-theme-mode="dark"] .lookup-finish-highlight {
   border-color: rgba(52, 211, 153, 0.85);
   background: rgba(16, 185, 129, 0.12);
   box-shadow: 0 0 12px rgba(52, 211, 153, 0.35);
 }
 
 .dark-mode .lookup-ready-check-badge,
-[data-theme='dark'] .lookup-ready-check-badge {
+[data-theme-mode="dark"] .lookup-ready-check-badge {
   border-color: rgba(255, 255, 255, 0.85);
   background: linear-gradient(135deg, #059669, #047857);
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4), 0 0 8px rgba(16, 185, 129, 0.4);
 }
 
 .dark-mode .lookup-ready-check-badge:hover,
-[data-theme='dark'] .lookup-ready-check-badge:hover {
+[data-theme-mode="dark"] .lookup-ready-check-badge:hover {
   background: #10b981;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5), 0 0 12px rgba(16, 185, 129, 0.6);
 }
@@ -7615,8 +7656,8 @@ input[type="range"]::-moz-range-thumb:hover,
 
 .dark-mode .knowledge-card.card-focus-highlight,
 .dark-mode .knowledge-grammar-card.card-focus-highlight,
-[data-theme='dark'] .knowledge-card.card-focus-highlight,
-[data-theme='dark'] .knowledge-grammar-card.card-focus-highlight {
+[data-theme-mode="dark"] .knowledge-card.card-focus-highlight,
+[data-theme-mode="dark"] .knowledge-grammar-card.card-focus-highlight {
   animation: cardJumpHighlightDark 2.4s ease-out forwards;
 }
 
@@ -7717,18 +7758,18 @@ input[type="range"]::-moz-range-thumb:hover,
 }
 
 .dark-mode .grammar-structure-row,
-[data-theme='dark'] .grammar-structure-row {
+[data-theme-mode="dark"] .grammar-structure-row {
   background: rgba(13, 148, 136, 0.14);
   border-color: rgba(13, 148, 136, 0.35);
 }
 
 .dark-mode .grammar-structure-label,
-[data-theme='dark'] .grammar-structure-label {
+[data-theme-mode="dark"] .grammar-structure-label {
   color: #5eead4;
 }
 
 .dark-mode .grammar-structure-text,
-[data-theme='dark'] .grammar-structure-text {
+[data-theme-mode="dark"] .grammar-structure-text {
   color: #99f6e4;
 }
 
@@ -8543,8 +8584,8 @@ input[type="range"]::-moz-range-thumb:hover,
   transition: color 0.15s ease;
 }
 
-[data-theme='dark'] .parenthesis-text,
-[data-theme='dark'] .roleplay-action-text {
+[data-theme-mode="dark"] .parenthesis-text,
+[data-theme-mode="dark"] .roleplay-action-text {
   color: #94a3b8 !important;
 }
 
@@ -8570,8 +8611,8 @@ input[type="range"]::-moz-range-thumb:hover,
   opacity: 0.88;
 }
 
-[data-theme='dark'] .parenthesis-text ruby rt,
-[data-theme='dark'] .roleplay-action-text ruby rt {
+[data-theme-mode="dark"] .parenthesis-text ruby rt,
+[data-theme-mode="dark"] .roleplay-action-text ruby rt {
   color: #64748b !important;
 }
 
@@ -8585,8 +8626,8 @@ input[type="range"]::-moz-range-thumb:hover,
   color: #475569 !important;
 }
 
-[data-theme='dark'] .parenthesis-text:hover,
-[data-theme='dark'] .roleplay-action-text:hover {
+[data-theme-mode="dark"] .parenthesis-text:hover,
+[data-theme-mode="dark"] .roleplay-action-text:hover {
   color: #cbd5e1 !important;
 }
 
@@ -10759,6 +10800,272 @@ input[type="range"]::-moz-range-thumb:hover,
 [data-theme-mode="dark"] .bubble-action-btn:hover {
   background: var(--bg-surface-hover);
   color: var(--text-primary);
+}
+
+/* 用户消息气泡与操作按钮 (深色模式沉浸式无突兀适配) */
+.dark-mode .bubble-user,
+[data-theme-mode="dark"] .bubble-user {
+  background: color-mix(in srgb, var(--primary) 22%, #1e1e1e);
+  border: 1px solid color-mix(in srgb, var(--primary) 40%, transparent);
+  color: #f8fafc;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.dark-mode .bubble-user .message-bubble-actions,
+[data-theme-mode="dark"] .bubble-user .message-bubble-actions {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 用户气泡内「编辑」与「重发」按钮：在深色模式下呈通透半透明微磨砂质感，杜绝黑洞突兀感 */
+.dark-mode .bubble-user .bubble-action-btn,
+[data-theme-mode="dark"] .bubble-user .bubble-action-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #e2e8f0;
+}
+
+.dark-mode .bubble-user .bubble-action-btn:hover,
+[data-theme-mode="dark"] .bubble-user .bubble-action-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.32);
+  color: #ffffff;
+}
+
+/* 用户编辑消息框与「取消」「保存并重发」按钮 (深色模式适配) */
+.dark-mode .user-message-edit-input,
+[data-theme-mode="dark"] .user-message-edit-input {
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #f8fafc;
+}
+
+.dark-mode .user-message-edit-input:focus,
+[data-theme-mode="dark"] .user-message-edit-input:focus {
+  background: rgba(0, 0, 0, 0.38);
+  border-color: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.15);
+}
+
+.dark-mode .edit-action-btn.edit-btn-cancel,
+.dark-mode .edit-action-btn.btn-cancel,
+[data-theme-mode="dark"] .edit-action-btn.edit-btn-cancel,
+[data-theme-mode="dark"] .edit-action-btn.btn-cancel {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #cbd5e1;
+}
+
+.dark-mode .edit-action-btn.edit-btn-cancel:hover,
+.dark-mode .edit-action-btn.btn-cancel:hover,
+[data-theme-mode="dark"] .edit-action-btn.edit-btn-cancel:hover,
+[data-theme-mode="dark"] .edit-action-btn.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+
+.dark-mode .edit-action-btn.edit-btn-confirm,
+.dark-mode .edit-action-btn.btn-confirm,
+[data-theme-mode="dark"] .edit-action-btn.edit-btn-confirm,
+[data-theme-mode="dark"] .edit-action-btn.btn-confirm {
+  background: var(--primary);
+  border: 1px solid var(--primary);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.dark-mode .edit-action-btn.edit-btn-confirm:hover:not(:disabled),
+.dark-mode .edit-action-btn.btn-confirm:hover:not(:disabled),
+[data-theme-mode="dark"] .edit-action-btn.edit-btn-confirm:hover:not(:disabled),
+[data-theme-mode="dark"] .edit-action-btn.btn-confirm:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode .bubble-user .correction-card,
+[data-theme-mode="dark"] .bubble-user .correction-card {
+  background: rgba(0, 0, 0, 0.32);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* 顶部与全局小元素标签 (深色模式柔化与对比度优化，消除突兀高亮) */
+.dark-mode .level-tag,
+[data-theme-mode="dark"] .level-tag {
+  background: color-mix(in srgb, var(--primary) 22%, var(--bg-surface-elevated));
+  color: var(--primary-light);
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, transparent);
+}
+
+.dark-mode .brand-version-badge,
+[data-theme-mode="dark"] .brand-version-badge {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #94a3b8;
+}
+
+.dark-mode .history-badge-count,
+[data-theme-mode="dark"] .history-badge-count {
+  background: color-mix(in srgb, var(--primary) 32%, var(--bg-surface-elevated));
+  color: #ffffff;
+  border: 1px solid color-mix(in srgb, var(--primary) 42%, transparent);
+}
+
+.dark-mode .history-badge-count.knowledge-badge,
+[data-theme-mode="dark"] .history-badge-count.knowledge-badge {
+  background: rgba(99, 102, 241, 0.28);
+  color: #c7d2fe;
+  border: 1px solid rgba(99, 102, 241, 0.4);
+}
+
+/* 词典徽标与各等级标签 (深色模式柔化底色与明晰文字) */
+.dark-mode .dict-level-badge.level-n5,
+.dark-mode .dict-level-badge.level-n4,
+[data-theme-mode="dark"] .dict-level-badge.level-n5,
+[data-theme-mode="dark"] .dict-level-badge.level-n4 {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.dark-mode .dict-level-badge.level-n3,
+[data-theme-mode="dark"] .dict-level-badge.level-n3 {
+  background: rgba(14, 165, 233, 0.16);
+  color: #38bdf8;
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+.dark-mode .dict-level-badge.level-n2,
+[data-theme-mode="dark"] .dict-level-badge.level-n2 {
+  background: rgba(99, 102, 241, 0.16);
+  color: #a5b4fc;
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.dark-mode .dict-level-badge.level-n1,
+[data-theme-mode="dark"] .dict-level-badge.level-n1 {
+  background: rgba(168, 85, 247, 0.16);
+  color: #c084fc;
+  border-color: rgba(168, 85, 247, 0.35);
+}
+
+.dark-mode .dict-pitch-badge,
+[data-theme-mode="dark"] .dict-pitch-badge {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.dark-mode .dict-infl-tag,
+[data-theme-mode="dark"] .dict-infl-tag {
+  background: rgba(99, 102, 241, 0.16);
+  color: #a5b4fc;
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.dark-mode .dict-zh-to-jp-tag,
+[data-theme-mode="dark"] .dict-zh-to-jp-tag {
+  background: rgba(14, 165, 233, 0.16);
+  color: #38bdf8;
+  border-color: rgba(14, 165, 233, 0.35);
+}
+
+/* 语法库与学情卡片等级标签、掌握度标签 (深色模式适配) */
+.dark-mode .grammar-level-badge,
+[data-theme-mode="dark"] .grammar-level-badge {
+  background: rgba(37, 99, 235, 0.16);
+  color: #60a5fa;
+  border-color: rgba(37, 99, 235, 0.35);
+}
+
+.dark-mode .grammar-level-tag,
+[data-theme-mode="dark"] .grammar-level-tag {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+.dark-mode .mastery-chip-btn.active.chip-learning,
+[data-theme-mode="dark"] .mastery-chip-btn.active.chip-learning {
+  background: rgba(37, 99, 235, 0.2);
+  color: #60a5fa;
+  border-color: rgba(37, 99, 235, 0.4);
+}
+
+.dark-mode .mastery-chip-btn.active.chip-reviewing,
+[data-theme-mode="dark"] .mastery-chip-btn.active.chip-reviewing {
+  background: rgba(217, 119, 6, 0.2);
+  color: #fbbf24;
+  border-color: rgba(217, 119, 6, 0.4);
+}
+
+.dark-mode .mastery-chip-btn.active.chip-mastered,
+[data-theme-mode="dark"] .mastery-chip-btn.active.chip-mastered {
+  background: rgba(22, 163, 74, 0.2);
+  color: #4ade80;
+  border-color: rgba(22, 163, 74, 0.4);
+}
+
+.dark-mode .knowledge-filter-pill.filter-learning.active .filter-count-badge,
+[data-theme-mode="dark"] .knowledge-filter-pill.filter-learning.active .filter-count-badge {
+  background: rgba(37, 99, 235, 0.25);
+  color: #93c5fd;
+}
+
+.dark-mode .knowledge-filter-pill.filter-reviewing.active .filter-count-badge,
+[data-theme-mode="dark"] .knowledge-filter-pill.filter-reviewing.active .filter-count-badge {
+  background: rgba(217, 119, 6, 0.25);
+  color: #fde68a;
+}
+
+.dark-mode .knowledge-filter-pill.filter-mastered.active .filter-count-badge,
+[data-theme-mode="dark"] .knowledge-filter-pill.filter-mastered.active .filter-count-badge {
+  background: rgba(22, 163, 74, 0.25);
+  color: #86efac;
+}
+
+.dark-mode .inspector-save-btn,
+[data-theme-mode="dark"] .inspector-save-btn {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .inspector-save-btn:hover,
+[data-theme-mode="dark"] .inspector-save-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.dark-mode .inspector-save-btn.saved,
+[data-theme-mode="dark"] .inspector-save-btn.saved {
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+/* 语法纠错卡片内划词对比高亮 (深色模式易读性优化) */
+.dark-mode .original-diff-error,
+[data-theme-mode="dark"] .original-diff-error {
+  color: #94a3b8;
+  opacity: 0.85;
+}
+
+.dark-mode .original-diff-correct,
+[data-theme-mode="dark"] .original-diff-correct {
+  color: #f1f5f9;
+}
+
+.dark-mode .explanation-label,
+[data-theme-mode="dark"] .explanation-label {
+  color: #818cf8;
+}
+
+.dark-mode .correction-explanation,
+[data-theme-mode="dark"] .correction-explanation {
+  background: rgba(0, 0, 0, 0.25);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #e2e8f0;
 }
 
 /* --- 历史会话抽屉与卡片 (深色模式适配) --- */
