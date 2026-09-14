@@ -230,7 +230,7 @@ export const GRAMMAR_BLOCK_REGEX = /:::grammar\s*([\s\S]*?)(?::::|\n[ \t]*\n|$)/
 /** 剥离消息中所有 :::grammar 语法精讲块（仅供纯文本 / 朗读 / 检索使用，采集走知识提取器） */
 export function stripGrammarBlocks(text: string): string {
   if (!text) return '';
-  return text.replace(/:::grammar\s*[\s\S]*?(?::::|\n[ \t]*\n|$)/gi, '');
+  return text.replace(/(?:\r?\n)?\s*:::grammar\s*[\s\S]*?(?::::|\n[ \t]*\n|$)/gi, '');
 }
 
 /** 剥离消息中所有 ::: 系统块（纠错块 + 语法精讲块） */
@@ -297,10 +297,15 @@ export type MessageSegment =
 // 解析消息分段：允许纠错块自然穿插在一条对话消息的中间或末尾，并嵌套在气泡内渲染
 export function parseMessageSegments(
   rawText: string,
-  fallbackCorrection?: MessageCorrection
+  fallbackCorrection?: MessageCorrection,
+  isStreaming = false
 ): MessageSegment[] {
-  // 语法精讲块是纯系统块：先在渲染前整体剥离，绝不能在气泡里露出 :::grammar 字样
+  // 语法精讲块是纯系统块：先在渲染前整体剥离，绝不能在气泡里露出 :::grammar 字样或未完成后台草稿
   rawText = stripGrammarBlocks(rawText || '');
+  if (isStreaming) {
+    rawText = rawText.replace(/:::grammar[\s\S]*$/gi, '');
+    rawText = rawText.replace(/(?:\n|^)\s*:::(?:g(?:r(?:a(?:m(?:m(?:a(?:r)?)?)?)?)?)?)?$/i, '');
+  }
 
   if (!rawText) {
     if (fallbackCorrection) {
@@ -319,7 +324,10 @@ export function parseMessageSegments(
     const matchEnd = match.index + match[0].length;
 
     if (matchStart > lastIndex) {
-      const textBefore = rawText.slice(lastIndex, matchStart);
+      let textBefore = rawText.slice(lastIndex, matchStart);
+      if (textBefore.endsWith('\n')) {
+        textBefore = textBefore.replace(/\r?\n$/, '');
+      }
       if (textBefore) {
         segments.push({
           type: 'text',
@@ -358,11 +366,6 @@ export function parseMessageSegments(
           betterExpression,
         },
       });
-    } else if (match[0].includes(':::')) {
-      segments.push({
-        type: 'text',
-        content: cleanOrphanedRubyBrackets(match[0]),
-      });
     }
 
     lastIndex = matchEnd;
@@ -373,7 +376,11 @@ export function parseMessageSegments(
   }
 
   if (lastIndex < rawText.length) {
-    const remainingText = rawText.slice(lastIndex);
+    let remainingText = rawText.slice(lastIndex);
+    if (isStreaming) {
+      // 过滤末尾正在输入的未完成纠错前缀，杜绝 :::corr 残片裸露
+      remainingText = remainingText.replace(/(?:\n|^)\s*:::(?:c(?:o(?:r(?:r(?:e(?:c(?:t(?:i(?:o(?:n)?)?)?)?)?)?)?)?)?)?$/i, '');
+    }
     if (remainingText) {
       segments.push({
         type: 'text',

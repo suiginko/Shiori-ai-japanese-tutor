@@ -210,6 +210,7 @@ export type ApiProvider =
   | 'ollama'
   | 'custom';
 
+export type ThemeMode = 'system' | 'light' | 'dark';
 export type ThemeColor = 'sakura' | 'indigo' | 'matcha' | 'amber' | 'slate' | 'violet';
 export type AppFontFamily = 'noto-sans' | 'custom' | 'noto-serif' | 'zen-maru' | 'system';
 export type AppFontSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -244,6 +245,7 @@ export interface ApiSettings {
   userAvatar?: string; // 用户自定义头像（图片 URL 或 base64 data:image）
 
   // Appearance & Design Tokens
+  themeMode?: ThemeMode; // 'system' | 'light' | 'dark'，默认跟随系统
   themeColor: ThemeColor;
   fontFamily: AppFontFamily;
   customFontFamily?: string; // 自定义字体名称（如 "Klee One", "LXGW WenKai", "Yu Mincho"）
@@ -255,7 +257,7 @@ export interface ApiSettings {
   rubyColor: RubyColorChoice; // default: 'theme'
   rubyCustomColor?: string; // hex, e.g. '#e11d48'
   bubbleDensity: BubbleDensity;
-  pitchLineColor: PitchLineColorChoice;
+  pitchLineColor?: PitchLineColorChoice;
 
   // History & Subtitle
   subtitleAutoRound: number; // 副标题在第几轮对话自动生成（0代表不自动生成，默认5）

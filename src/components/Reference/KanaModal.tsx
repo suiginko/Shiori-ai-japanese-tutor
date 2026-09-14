@@ -99,7 +99,7 @@ export const KanaModal: React.FC<KanaModalProps> = ({ isOpen, onClose }) => {
 
               <div className="kana-tips-card">
                 <div className="tip-header">
-                  <span className="text-amber-500 font-bold">★</span>
+                  <span className="text-amber-500">★</span>
                   <span>母语者发音诀窍</span>
                 </div>
                 <p className="tip-body">{selectedKana.pronunciationTip}</p>

@@ -18,7 +18,12 @@ import {
   ShioriBackupData,
 } from '../types';
 import { ROLEPLAY_SCENARIOS } from '../data/scenarios';
-import { extractKnowledgeFromMessage, collectNewWordRefs } from '../utils/knowledgeExtractor';
+import {
+  extractKnowledgeFromMessage,
+  collectNewWordRefs,
+  isWordAlreadyLearned,
+  isGrammarAlreadyLearned,
+} from '../utils/knowledgeExtractor';
 import { dictionaryService } from '../services/dictionaryService';
 import { GRAMMAR_POINTS } from '../data/grammarPoints';
 import {
@@ -424,6 +429,7 @@ const DEFAULT_SETTINGS: ApiSettings = {
   userAvatar: '',
 
   // Appearance & Design Tokens
+  themeMode: 'system',
   themeColor: 'sakura',
   fontFamily: 'noto-sans',
   customFontFamily: '',
@@ -883,10 +889,21 @@ export function useAppStore() {
   // 关闭页面/刷新前同步落盘，避免防抖窗口内的最新状态丢失
   const sessionsRef = useRef(sessions);
   const currentSessionIdRef = useRef(currentSessionId);
+  const learnedWordsRef = useRef(learnedWords);
+  const learnedGrammarRef = useRef(learnedGrammar);
+
   useEffect(() => {
     sessionsRef.current = sessions;
     currentSessionIdRef.current = currentSessionId;
   }, [sessions, currentSessionId]);
+
+  useEffect(() => {
+    learnedWordsRef.current = learnedWords;
+  }, [learnedWords]);
+
+  useEffect(() => {
+    learnedGrammarRef.current = learnedGrammar;
+  }, [learnedGrammar]);
 
   useEffect(() => {
     const flush = () => {
@@ -1341,12 +1358,30 @@ export function useAppStore() {
     try {
       const { words: extractedWords, grammars: extractedGrammars } = extractKnowledgeFromMessage(message);
       if (extractedWords.length > 0) {
-        // 先按"入库前"的存量快照判定哪些是新词——已收录词在对话中复现属日常复习，不该每次都提示
-        const knownWordSurfaces = new Set(learnedWords.map((w) => w.surface));
-        collectedWords = collectNewWordRefs(extractedWords, knownWordSurfaces);
-        extractedWords.forEach((w) => {
-          // 立即入库到学情生词档案
+        // 使用 Ref 确保拿到最新学情词库快照，杜绝闭包陈旧导致已收录词被重复判定为新词
+        const currentWords = learnedWordsRef.current;
+        const addedThisRoundSurfaces = new Set<string>();
+
+        for (const w of extractedWords) {
+          const surface = (w.surface || '').trim();
+          if (!surface) continue;
+
+          // 严格判定：若在学情档案中已收录（表面词、辞书原型 lemma、反活用对齐），或本轮已收录，一律判定为旧词
+          const isOld = isWordAlreadyLearned(w, currentWords) || addedThisRoundSurfaces.has(surface);
+
+          if (!isOld) {
+            collectedWords.push({
+              surface: w.surface,
+              reading: w.reading,
+              level: w.level,
+              pos: w.pos,
+            });
+            addedThisRoundSurfaces.add(surface);
+          }
+
+          // 无论是否为新词，均执行入库或刷新复习频次
           addLearnedWord(w);
+
           // 联动 AI 词典：若当前词汇未在 AI 权威词典中生成丰富语用搭配与例句，异步触发生成并补充写入
           if (!w.detail || !w.exampleJp || w.meaning.length <= 8) {
             dictionaryService
@@ -1372,20 +1407,42 @@ export function useAppStore() {
               })
               .catch(() => {});
           }
-        });
-        setProfile((prev) => ({
-          ...prev,
-          estimatedVocab: prev.estimatedVocab + Math.min(extractedWords.length * 2, 6),
-        }));
+        }
+
+        if (collectedWords.length > 0) {
+          setProfile((prev) => ({
+            ...prev,
+            estimatedVocab: prev.estimatedVocab + Math.min(collectedWords.length * 2, 6),
+          }));
+        }
       }
 
       if (extractedGrammars.length > 0) {
-        const knownKeys = new Set(learnedGrammar.map((g) => normalizeGrammarKey(g.title)));
-        extractedGrammars.forEach((g) => {
-          const isNew = !knownKeys.has(normalizeGrammarKey(g.title));
-          collectedGrammars.push({ title: g.title, level: g.level, isNew });
+        // 使用 Ref 确保拿到最新学情语法快照
+        const currentGrammars = learnedGrammarRef.current;
+        const addedThisRoundKeys = new Set<string>();
+
+        for (const g of extractedGrammars) {
+          const rawTitle = (g.title || '').trim();
+          if (!rawTitle) continue;
+          const normalizedKey = normalizeGrammarKey(rawTitle);
+
+          // 严格判定：若在学情档案中已收录（标题归一化、权威语法库对齐），或本轮已收录，一律判定为旧语法
+          const isOld = isGrammarAlreadyLearned(g, currentGrammars) || addedThisRoundKeys.has(normalizedKey);
+
+          if (!isOld) {
+            // 严格只将全新句型加入 collectedGrammars，旧句型绝不放入，杜绝错误提示
+            collectedGrammars.push({
+              title: g.title,
+              level: g.level,
+              isNew: true,
+            });
+            addedThisRoundKeys.add(normalizedKey);
+          }
+
+          // 无论是否新语法，均入库学情档案或递增复习频次
           addLearnedGrammar(g);
-        });
+        }
       }
     } catch (err) {
       console.warn('Knowledge extraction failed:', err);

@@ -1,5 +1,10 @@
 {
   "appId": "com.shiori.japanese.tutor",
   "appName": "栞 (Shiori)",
-  "webDir": "dist"
+  "webDir": "dist",
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": true
+    }
+  }
 }

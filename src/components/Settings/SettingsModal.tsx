@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import {
   ApiSettings,
   ApiProvider,
+  ThemeMode,
   ThemeColor,
   AppFontFamily,
   AppFontSize,
@@ -9,13 +10,13 @@ import {
   RubyColorChoice,
   LineHeightChoice,
   BubbleDensity,
-  PitchLineColorChoice,
   SubtitleSeparatorType,
   PersonaPreset,
 } from '../../types';
 import { RubyText } from '../Chat/RubyText';
 import { ImageCropperModal } from './ImageCropperModal';
 import { getNameInitial } from '../../utils/nameRubyHelper';
+import { useBackButton } from '../../utils/backButtonManager';
 import {
   X,
   Key,
@@ -24,6 +25,7 @@ import {
   Volume2,
   ShieldCheck,
   Palette,
+  Sun,
   Sliders,
   Type,
   User,
@@ -50,6 +52,8 @@ import {
   AlertTriangle,
   CheckCheck,
   Search,
+  MessageSquare,
+  Edit2,
 } from 'lucide-react';
 import { ShioriBackupData } from '../../types';
 import { speechService } from '../../services/speechService';
@@ -139,13 +143,19 @@ const PROVIDER_PRESETS: Record<
   },
 };
 
-const THEME_OPTIONS: Array<{ id: ThemeColor; name: string; color: string; desc: string }> = [
-  { id: 'sakura', name: '🌸 绯樱 (Sakura)', color: '#e11d48', desc: '经典绯红樱色，温雅和煦' },
-  { id: 'indigo', name: '🌊 琉璃 (Ruri)', color: '#4f46e5', desc: '沉着内敛深蓝，专注高效' },
-  { id: 'matcha', name: '🍵 青竹 (Matcha)', color: '#059669', desc: '自然清新茶青，护眼舒适' },
-  { id: 'amber', name: '🍊 琥珀 (Amber)', color: '#d97706', desc: '明朗温润暖橙，充满朝气' },
-  { id: 'violet', name: '🍇 桔梗 (Violet)', color: '#7c3aed', desc: '清雅幽静紫藤，浪漫灵动' },
-  { id: 'slate', name: '🌑 玄墨 (Slate)', color: '#334155', desc: '极简水墨石板，低调高级' },
+const THEME_MODE_OPTIONS: Array<{ id: ThemeMode; name: string; icon: string }> = [
+  { id: 'system', name: '跟随系统', icon: '🌗' },
+  { id: 'light', name: '浅色模式', icon: '☀️' },
+  { id: 'dark', name: '深色模式', icon: '🌙' },
+];
+
+const THEME_OPTIONS: Array<{ id: ThemeColor; name: string; color: string }> = [
+  { id: 'sakura', name: '绯樱', color: '#e11d48' },
+  { id: 'indigo', name: '琉璃', color: '#4f46e5' },
+  { id: 'matcha', name: '青竹', color: '#059669' },
+  { id: 'amber', name: '琥珀', color: '#d97706' },
+  { id: 'violet', name: '桔梗', color: '#7c3aed' },
+  { id: 'slate', name: '玄墨', color: '#334155' },
 ];
 
 const FONT_OPTIONS: Array<{ id: AppFontFamily; name: string; sample: string }> = [
@@ -289,6 +299,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const userAvatarFileRef = useRef<HTMLInputElement | null>(null);
   const presetImportFileRef = useRef<HTMLInputElement | null>(null);
   const backupFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 内部子弹窗返回拦截（优先级 80）：优先收起头像裁剪窗口
+  useBackButton(
+    'settings-cropper-modal',
+    cropperState.isOpen,
+    () => {
+      setCropperState((prev) => ({ ...prev, isOpen: false }));
+    },
+    80
+  );
+
+  // 内部预设保存框（优先级 70）：收起预设保存浮层
+  useBackButton(
+    'settings-preset-box',
+    showSavePresetBox,
+    () => {
+      setShowSavePresetBox(false);
+    },
+    70
+  );
+
+  // 内部数据恢复确认框（优先级 70）：收起备份确认浮层
+  useBackButton(
+    'settings-backup-confirm',
+    !!pendingBackup,
+    () => {
+      setPendingBackup(null);
+    },
+    70
+  );
 
   if (!isOpen) return null;
 
@@ -575,6 +615,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       default:
         return 1.8;
     }
+  })();
+
+  const previewFontSize = (() => {
+    switch (formData.fontSize) {
+      case 'sm':
+        return '14px';
+      case 'lg':
+        return '18px';
+      case 'xl':
+        return '20px';
+      case 'md':
+      default:
+        return '16px';
+    }
+  })();
+
+  const previewBubblePadding = (() => {
+    switch (formData.bubbleDensity) {
+      case 'compact':
+        return '10px 14px';
+      case 'spacious':
+        return '18px 24px';
+      case 'normal':
+      default:
+        return '14px 20px';
+    }
+  })();
+
+  const previewFontFamily = (() => {
+    if (formData.fontFamily === 'custom' && formData.customFontFamily?.trim()) {
+      return formData.customFontFamily.trim();
+    }
+    const map: Record<string, string> = {
+      'noto-serif': "var(--font-serif, 'Noto Serif JP', serif)",
+      'zen-maru': "var(--font-maru, 'Zen Maru Gothic', sans-serif)",
+      system: "var(--font-system, -apple-system, BlinkMacSystemFont, sans-serif)",
+    };
+    return map[formData.fontFamily || 'noto-sans'] || "var(--font-japanese, 'Noto Sans JP', sans-serif)";
   })();
 
   return (
@@ -963,10 +1041,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {/* Persona Style & Description */}
                 <div className="form-group" style={{ marginTop: '16px' }}>
                   <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '0.96rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                    <span style={{ fontSize: '0.96rem', fontWeight: 'normal', color: 'var(--text-primary)' }}>
                       🎭 私教人设性格与教学风格定位
                     </span>
-                    <span className="label-subtip" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.82rem' }}>
+                    <span className="label-subtip" style={{ color: 'var(--primary)', fontWeight: 'normal', fontSize: '0.82rem' }}>
                       （置空默认：亲切温柔的AI日语私教）
                     </span>
                   </label>
@@ -1008,6 +1086,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* ================= TAB 1: APPEARANCE & TYPOGRAPHY ================= */}
           {activeTab === 'appearance' && (
             <div className="settings-section-container">
+              {/* Section: Theme Mode (深浅模式 / 跟随系统) */}
+              <div className="custom-setting-group">
+                <div className="group-heading">
+                  <Sun size={17} className="heading-icon" />
+                  <span className="heading-text">外观深浅模式</span>
+                </div>
+                <div className="theme-mode-grid">
+                  {THEME_MODE_OPTIONS.map((m) => {
+                    const isSelected = (formData.themeMode || 'system') === m.id;
+                    return (
+                      <button
+                        type="button"
+                        key={m.id}
+                        className={`theme-mode-card ${isSelected ? 'active' : ''}`}
+                        onClick={() => setFormData({ ...formData, themeMode: m.id })}
+                      >
+                        <span className="theme-mode-emoji">{m.icon}</span>
+                        <span className="theme-mode-title">{m.name}</span>
+                        {isSelected && <Check size={14} className="theme-check-icon" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Section: Theme Color */}
               <div className="custom-setting-group">
                 <div className="group-heading">
@@ -1015,22 +1118,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <span className="heading-text">和风主题色系</span>
                 </div>
                 <div className="theme-palette-grid">
-                  {THEME_OPTIONS.map((t) => (
-                    <div
-                      key={t.id}
-                      className={`theme-card-option ${formData.themeColor === t.id ? 'active' : ''}`}
-                      onClick={() => setFormData({ ...formData, themeColor: t.id })}
-                    >
-                      <div className="theme-color-dot" style={{ backgroundColor: t.color }} />
-                      <div className="theme-meta">
-                        <div className="theme-name">{t.name}</div>
-                        <div className="theme-desc">{t.desc}</div>
-                      </div>
-                      {formData.themeColor === t.id && (
-                        <Check size={16} className="theme-check-icon" style={{ color: t.color }} />
-                      )}
-                    </div>
-                  ))}
+                  {THEME_OPTIONS.map((t) => {
+                    const isSelected = formData.themeColor === t.id;
+                    return (
+                      <button
+                        type="button"
+                        key={t.id}
+                        className={`theme-card-option ${isSelected ? 'active' : ''}`}
+                        onClick={() => setFormData({ ...formData, themeColor: t.id })}
+                      >
+                        <span className="theme-color-dot" style={{ backgroundColor: t.color }} />
+                        <span className="theme-name">{t.name}</span>
+                        {isSelected && (
+                          <Check size={14} className="theme-check-icon" style={{ color: t.color }} />
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1166,38 +1270,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   )}
                 </div>
 
-                <div className="grid-two-inputs">
-                  {/* Bubble Font Size */}
-                  <div className="form-group">
-                    <label className="form-label">对话正文字号：</label>
-                    <select
-                      className="form-select"
-                      value={formData.fontSize || 'md'}
-                      onChange={(e) => setFormData({ ...formData, fontSize: e.target.value as AppFontSize })}
-                    >
-                      <option value="sm">小号 (14px·紧凑信息)</option>
-                      <option value="md">标准 (16px·默认舒适)</option>
-                      <option value="lg">偏大 (18px·轻松阅读)</option>
-                      <option value="xl">超大 (20px·护眼大字)</option>
-                    </select>
-                  </div>
-
-                  {/* Pitch Line Color */}
-                  <div className="form-group">
-                    <label className="form-label">声调线条配色：</label>
-                    <select
-                      className="form-select"
-                      value={formData.pitchLineColor || 'theme'}
-                      onChange={(e) =>
-                        setFormData({ ...formData, pitchLineColor: e.target.value as PitchLineColorChoice })
-                      }
-                    >
-                      <option value="theme">跟随主题色调</option>
-                      <option value="vermilion">教材朱红色 (Crimson)</option>
-                      <option value="indigo">绀青深蓝色 (Indigo)</option>
-                    </select>
+                {/* Bubble Font Size */}
+                <div className="form-group">
+                  <label className="form-label">对话正文字号：</label>
+                  <div className="density-buttons-row">
+                    {[
+                      { id: 'sm', label: '小号 (14px)' },
+                      { id: 'md', label: '标准 (16px)' },
+                      { id: 'lg', label: '偏大 (18px)' },
+                      { id: 'xl', label: '超大 (20px)' },
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`density-pill-btn ${(formData.fontSize || 'md') === item.id ? 'active' : ''}`}
+                        onClick={() => setFormData({ ...formData, fontSize: item.id as AppFontSize })}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
+
+
 
                 {/* Line Height Control */}
                 <div className="form-group">
@@ -1391,31 +1486,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     }
                   >
                     <div className="preview-header">
-                      <span className="preview-badge">✨ 效果实时预览（假名/声调/行距联动）</span>
+                      <span className="preview-badge">✨ 对话排版实时预览（字号/假名/行距/气泡联动）</span>
                       <span className="preview-stats">
-                        颜色: <code>{formData.rubyColor === 'theme' ? '跟随主题' : previewRubyColor}</code> | 字号: <code>{previewRubyRatio}</code> | 行距: <code>{previewLineHeight}x</code>
+                        字号: <code>{previewFontSize}</code> | 假名: <code>{previewRubyRatio}</code> | 行距: <code>{previewLineHeight}x</code>
                       </span>
                     </div>
-                    <div className="preview-text-box" style={{ lineHeight: previewLineHeight }}>
-                      <div className="preview-line has-ruby-annotation">
-                        <RubyText
-                          content="私[わたし]は 毎日[まいにち] 日本語[にほんご]を 勉強[べんきょう]します。"
-                          furiganaMode={formData.furiganaMode || 'always'}
-                          pitchDisplayMode={formData.pitchDisplayMode || 'curve'}
-                          interactive={false}
-                        />
-                      </div>
-                      <div className="preview-line has-ruby-annotation">
-                        <RubyText
-                          content="先生[せんせい]と 会話[かいわ]の 練習[れんしゅう]を 楽[たの]しんでいます。"
-                          furiganaMode={formData.furiganaMode || 'always'}
-                          pitchDisplayMode={formData.pitchDisplayMode || 'curve'}
-                          interactive={false}
-                        />
+
+                    <div className="preview-chat-container">
+                      <div className="preview-message-row">
+                        {/* Avatar */}
+                        <div className="preview-avatar-circle ai-avatar">
+                          {formData.aiAvatar ? (
+                            <img src={formData.aiAvatar} alt={formData.aiTutorName || 'Shiori'} className="avatar-img" />
+                          ) : (
+                            <span className="avatar-jp-char">{getNameInitial(formData.aiTutorName || '栞')}</span>
+                          )}
+                        </div>
+
+                        {/* Content Area */}
+                        <div className="preview-message-content">
+                          {/* Sender Meta */}
+                          <div className="preview-sender-meta">
+                            <span className="preview-sender-name">{formData.aiTutorName || '栞 (Shiori)'}</span>
+                            <span className="preview-sender-time">19:42 · 效果预览</span>
+                          </div>
+
+                          {/* Bubble */}
+                          <div
+                            className="message-bubble bubble-assistant preview-bubble-styled"
+                            style={{
+                              padding: previewBubblePadding,
+                              lineHeight: previewLineHeight,
+                              fontSize: previewFontSize,
+                              fontFamily: previewFontFamily,
+                            }}
+                          >
+                            <div className="preview-bubble-body">
+                              <div className="preview-line has-ruby-annotation">
+                                <RubyText
+                                  content="{今日[きょう]}の {勉強[べんきょう]}も よく {頑張[がんば]}りましたね！{新[あたら]}しい {表現[ひょうげん]}を {使[つか]}って、{一緒[いっしょ]}に {楽[たの]}しく {会話[かいわ]}しましょう。"
+                                  furiganaMode={formData.furiganaMode || 'always'}
+                                  pitchDisplayMode="none"
+                                  interactive={false}
+                                  isExplicitJapanese={true}
+                                />
+                              </div>
+                              <div className="preview-line parenthesis-text roleplay-action-text" style={{ marginTop: '6px' }}>
+                                （今天的学习也很努力呢！用新学到的表达一起开心地对话吧～）
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
+
                     <p className="preview-tip-text">
-                      注：此预览区域仅用于实时查看字号、颜色与多行行距效果，已禁用点击生词弹窗。修改后点击底部「保存设置」全站即刻生效。
+                      注：此预览区域 1:1 模拟真实对话界面（含私教头像、发送者信息与气泡外形），直观联动字号、振假名比例、行距及气泡内边距。
                     </p>
                   </div>
                 </div>
@@ -1535,35 +1661,58 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {/* Subtitle Live Preview Box */}
                   <div className="subtitle-preview-container">
                     <div className="preview-header">
-                      <span className="preview-badge">话题副标题实时效果预览</span>
+                      <span className="preview-badge">📋 历史会话卡片实时预览（副标题连接词联动）</span>
                       <span className="preview-stats">
                         当前连接词：<code>"{getSeparatorString(formData.subtitleSeparator, formData.subtitleCustomSeparator)}"</code>
                       </span>
                     </div>
-                    <div className="subtitle-sample-tags-row">
-                      <div className="sample-badge-item">
-                        <span className="sample-item-label">经典范例：</span>
-                        <span className="session-subtitle-plain preview-plain-style">
-                          {formatSubtitleWithTopics(
-                            ['笨蛋', '测验', '召唤兽'],
-                            formData.subtitleSeparator,
-                            formData.subtitleCustomSeparator
-                          )}
-                        </span>
-                      </div>
-                      <div className="sample-badge-item">
-                        <span className="sample-item-label">会话范例：</span>
-                        <span className="session-subtitle-plain preview-plain-style">
-                          {formatSubtitleWithTopics(
-                            ['京都', '居酒屋', '新干线'],
-                            formData.subtitleSeparator,
-                            formData.subtitleCustomSeparator
-                          )}
-                        </span>
+
+                    <div className="subtitle-cards-preview-grid">
+                      {/* Regular dialogue card */}
+                      <div className="history-session-card">
+                        <div className="session-card-top">
+                          <div className="session-title-wrap">
+                            <MessageSquare size={14} className="session-item-icon" />
+                            <div className="session-title-column">
+                              <div className="session-title-row">
+                                <h4 className="session-title">京都秋日赏枫旅行规划</h4>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="session-preview-snippet">
+                          来週の新幹線チケットを予約しましょう。（来预约下周的新干线车票吧。）
+                        </p>
+
+                        <div className="session-card-bottom">
+                          <div className="session-meta-stats">
+                            <span className="session-time">昨天 16:30</span>
+                            <span className="meta-dot">·</span>
+                            <span className="session-msg-count">8条</span>
+                          </div>
+
+                          <div className="session-card-actions">
+                            <span className="session-subtitle-bottom-tag">
+                              {formatSubtitleWithTopics(
+                                ['京都', '新干线', '切符'],
+                                formData.subtitleSeparator,
+                                formData.subtitleCustomSeparator
+                              )}
+                            </span>
+                            <span className="action-icon-btn btn-rename" title="编辑主标题与副标题">
+                              <Edit2 size={13} />
+                            </span>
+                            <span className="action-icon-btn btn-delete" title="删除此对话">
+                              <Trash2 size={13} />
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     </div>
+
                     <p className="preview-tip-text">
-                      注：保存后，全站所有基于 3 个关键词自动生成的历史记录副标题均将采用该连接风格呈现。
+                      注：此预览 1:1 还原历史对话列表卡片（包含活动状态指示灯、会话摘要、时间与副标题胶囊）。切换上方连接词即可实时预览右下角标签样式。
                     </p>
                   </div>
                 </div>
@@ -1769,17 +1918,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {/* Furigana Display Mode */}
               <div className="form-group">
                 <label className="form-label">振假名注音默认显示方式：</label>
-                <select
-                  value={formData.furiganaMode}
-                  onChange={(e) =>
-                    setFormData({ ...formData, furiganaMode: e.target.value as any })
-                  }
-                  className="form-select"
-                >
-                  <option value="always">始终显示 (初学者推荐)</option>
-                  <option value="hover">鼠标悬浮时显示 (进阶自主测试)</option>
-                  <option value="hidden">隐藏注音 (纯汉字实战挑战)</option>
-                </select>
+                <div className="density-buttons-row">
+                  {[
+                    { id: 'always', label: '始终显示 (初学推荐)' },
+                    { id: 'hover', label: '悬浮显示 (进阶自测)' },
+                    { id: 'hidden', label: '隐藏注音 (实战挑战)' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`density-pill-btn ${(formData.furiganaMode || 'always') === item.id ? 'active' : ''}`}
+                      onClick={() => setFormData({ ...formData, furiganaMode: item.id as any })}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Furigana Hide Mastered Words Toggle */}
@@ -1942,15 +2096,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       </div>
                       <div className="inspection-item">
                         <span className="item-k">生词数：</span>
-                        <span className="item-v text-primary font-bold">{pendingBackup.inspection.summary.wordsCount} 词</span>
+                        <span className="item-v text-primary">{pendingBackup.inspection.summary.wordsCount} 词</span>
                       </div>
                       <div className="inspection-item">
                         <span className="item-k">语法数：</span>
-                        <span className="item-v text-primary font-bold">{pendingBackup.inspection.summary.grammarCount} 条</span>
+                        <span className="item-v text-primary">{pendingBackup.inspection.summary.grammarCount} 条</span>
                       </div>
                       <div className="inspection-item">
                         <span className="item-k">会话数：</span>
-                        <span className="item-v font-bold">{pendingBackup.inspection.summary.sessionsCount} 个</span>
+                        <span className="item-v">{pendingBackup.inspection.summary.sessionsCount} 个</span>
                       </div>
                       <div className="inspection-item">
                         <span className="item-k">API Key：</span>

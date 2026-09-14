@@ -43,3 +43,9 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Tests (local automated regression scripts)
+tests/
+
+# AI Agent internal instructions
+AGENTS.md

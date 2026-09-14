@@ -6,10 +6,10 @@ import {
 } from '../types';
 import {
   Settings,
-  BookOpen,
   Calendar,
   Grid,
   Eye,
+  EyeOff,
   Activity,
   History,
   Brain,
@@ -23,7 +23,6 @@ interface HeaderProps {
   onPitchDisplayModeChange: (mode: PitchDisplayMode) => void;
   onOpenPlan: () => void;
   onOpenKana: () => void;
-  onOpenGrammar: () => void;
   onOpenKnowledge?: () => void;
   learnedCount?: number;
   onOpenSettings: () => void;
@@ -39,20 +38,42 @@ export const Header: React.FC<HeaderProps> = ({
   onPitchDisplayModeChange,
   onOpenPlan,
   onOpenKana,
-  onOpenGrammar,
   onOpenKnowledge,
   learnedCount = 0,
   onOpenSettings,
   onOpenHistory,
   sessionCount = 0,
 }) => {
+  // 判断当前是否为移动端/触屏环境
+  const isMobile = () => {
+    if (typeof window === 'undefined') return false;
+    return (
+      (typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches) ||
+      window.innerWidth <= 768 ||
+      ('ontouchstart' in window && window.innerWidth <= 1024)
+    );
+  };
+
   const cycleFuriganaMode = () => {
-    if (furiganaMode === 'always') onFuriganaModeChange('hover');
-    else if (furiganaMode === 'hover') onFuriganaModeChange('hidden');
-    else onFuriganaModeChange('always');
+    if (isMobile()) {
+      // 手机版：只有“显示”和“隐藏”两种状态（手机触屏无悬停操作）
+      if (furiganaMode === 'hidden') {
+        onFuriganaModeChange('always');
+      } else {
+        onFuriganaModeChange('hidden');
+      }
+    } else {
+      // 桌面版：支持 常显 / 悬停 / 隐藏 三态循环
+      if (furiganaMode === 'always') onFuriganaModeChange('hover');
+      else if (furiganaMode === 'hover') onFuriganaModeChange('hidden');
+      else onFuriganaModeChange('always');
+    }
   };
 
   const getFuriganaLabel = () => {
+    if (isMobile()) {
+      return furiganaMode === 'hidden' ? '注音: 隐藏' : '注音: 显示';
+    }
     switch (furiganaMode) {
       case 'always':
         return '注音: 常显';
@@ -64,6 +85,9 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   const getShortFuriganaLabel = () => {
+    if (isMobile()) {
+      return furiganaMode === 'hidden' ? '隐藏' : '显示';
+    }
     switch (furiganaMode) {
       case 'always':
         return '常显';
@@ -103,13 +127,17 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* Furigana Display Toggle */}
+          {/* Furigana Display Toggle: 统一深灰色样式，无黄色刺眼高亮 */}
           <button
-            className={`quick-toggle-btn ${furiganaMode !== 'always' ? 'btn-highlight' : ''}`}
+            className={`quick-toggle-btn ${furiganaMode === 'hidden' ? 'mode-hidden' : ''}`}
             onClick={cycleFuriganaMode}
-            title="切换汉字上方振假名显示策略（全显 / 悬停查看 / 隐藏自我检测）"
+            title={
+              isMobile()
+                ? '切换汉字注音（显示 / 隐藏）'
+                : '切换汉字上方振假名显示策略（常显 / 悬停查看 / 隐藏自我检测）'
+            }
           >
-            <Eye size={14} />
+            {furiganaMode === 'hidden' ? <EyeOff size={14} /> : <Eye size={14} />}
             <span className="toggle-label-full">{getFuriganaLabel()}</span>
             <span className="toggle-label-short">{getShortFuriganaLabel()}</span>
           </button>
@@ -120,11 +148,6 @@ export const Header: React.FC<HeaderProps> = ({
           <button className="header-icon-btn" onClick={onOpenKana} title="五十音图速查与发音指南">
             <Grid size={16} />
             <span className="icon-label">五十音</span>
-          </button>
-
-          <button className="header-icon-btn" onClick={onOpenGrammar} title="JLPT 核心语法宝典">
-            <BookOpen size={16} />
-            <span className="icon-label">语法库</span>
           </button>
 
           <button className="header-icon-btn header-btn-plan" onClick={onOpenPlan} title="AI 自主学习规划与诊断">

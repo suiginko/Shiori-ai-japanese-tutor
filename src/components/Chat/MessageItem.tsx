@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { ChatMessage, FuriganaMode, PitchDisplayMode, MessageCorrection } from '../../types';
 import { RubyText } from './RubyText';
 import { parseMessageSegments, stripRubyForTTS, normalizeJapaneseMarkdownTags } from '../../utils/rubyParser';
+import { sanitizeStreamingContent } from '../../utils/streamingSanitizer';
 import { getNameInitial, NameWithRuby } from '../../utils/nameRubyHelper';
 import { computeCorrectionDiff } from '../../utils/diffHelper';
 import { isJapaneseSentence, extractJapaneseSpeakableText, sanitizeActionDescriptions } from '../../utils/languageDetector';
@@ -502,8 +503,8 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
 
   // 解析消息内可能嵌套的随堂语法纠错块（支持穿插在对话消息中间、末尾或由 message.correction 兜底）
   const segments = useMemo(
-    () => parseMessageSegments(message.content, message.correction),
-    [message.content, message.correction]
+    () => parseMessageSegments(message.content, message.correction, isGenerating),
+    [message.content, message.correction, isGenerating]
   );
 
   const hasAnyContent = useMemo(() => {
@@ -564,7 +565,9 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
     segIdx: number,
     isLastSegment: boolean
   ) => {
-    const sanitizedText = sanitizeActionDescriptions(rawChunk);
+    const isStreamTarget = isGenerating && isLastSegment;
+    const smoothedChunk = sanitizeStreamingContent(rawChunk, isStreamTarget);
+    const sanitizedText = sanitizeActionDescriptions(smoothedChunk);
     const safeText = sanitizedText.replace(/\{userName\}/g, userName);
     const lines = safeText.split('\n');
 
@@ -573,8 +576,16 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
         {lines.map((line, idx) => {
           const lineKey = `${segIdx}-${idx}`;
           const trimmed = line.trim();
+          const isLastLine = idx === lines.length - 1;
+
           if (!trimmed) {
-            return <div key={lineKey} className="bubble-paragraph-spacer" />;
+            return (
+              <div key={lineKey} className="bubble-paragraph-spacer">
+                {isLastLine && !isUser && isGenerating && isLastSegment && (
+                  <span className="streaming-cursor-dot" title="AI 正在生成中..." />
+                )}
+              </div>
+            );
           }
 
           // 1. 水平分割线 (---, ***, ___)
@@ -582,6 +593,9 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
             return (
               <div key={lineKey} className="bubble-line md-divider-container">
                 <hr className="md-divider" />
+                {isLastLine && !isUser && isGenerating && isLastSegment && (
+                  <span className="streaming-cursor-dot" title="AI 正在生成中..." />
+                )}
               </div>
             );
           }
@@ -619,6 +633,9 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
                       <Volume2 size={12} />
                     </button>
                   )}
+                  {isLastLine && !isUser && isGenerating && isLastSegment && (
+                    <span className="streaming-cursor-dot" title="AI 正在生成中..." />
+                  )}
                 </span>
               </div>
             );
@@ -652,6 +669,9 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
                     >
                       <Volume2 size={12} />
                     </button>
+                  )}
+                  {isLastLine && !isUser && isGenerating && isLastSegment && (
+                    <span className="streaming-cursor-dot" title="AI 正在生成中..." />
                   )}
                 </span>
               </div>
@@ -705,11 +725,14 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
                     <Volume2 size={12} />
                   </button>
                 )}
+                {isLastLine && !isUser && isGenerating && isLastSegment && (
+                  <span className="streaming-cursor-dot" title="AI 正在生成中..." />
+                )}
               </span>
             </div>
           );
         })}
-        {!isUser && isGenerating && isLastSegment && (
+        {lines.length === 0 && !isUser && isGenerating && isLastSegment && (
           <span className="streaming-cursor-dot" title="AI 正在重新生成中..." />
         )}
       </div>
@@ -751,7 +774,10 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
   }, [message.collectedWords]);
 
   return (
-    <div className={`message-item-wrapper ${isUser ? 'user-side' : 'assistant-side'}`}>
+    <div
+      className={`message-item-wrapper ${isUser ? 'user-side' : 'assistant-side'}`}
+      data-message-id={message.id}
+    >
       <div className="message-avatar-meta-row">
         <div className={`message-avatar-box avatar-circle ${isUser ? 'user-avatar' : 'ai-avatar'}`}>
           {isUser ? (
@@ -788,7 +814,7 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
                 <span className="dot" />
                 <span className="dot" />
               </div>
-              <span className="typing-text">{aiTutorName} 思考中...</span>
+              <span className="typing-text">{aiTutorName} 正在输入...</span>
             </div>
           ) : isUser && isEditing ? (
             <div className="user-message-edit-box">

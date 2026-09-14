@@ -9,9 +9,6 @@
   src: local('Noto Sans JP'), url('/fonts/NotoSansJP-Regular.woff2') format('woff2');
 }
 
-/* 仅西文英数字体保留轻量 CDN 镜像引用 */
-@import url('https://fonts.loli.net/css2?family=Outfit:wght@400;500;600;700&display=swap');
-
 :root {
   /* ========================================= */
   /* JAPANESE LIGHT ZEN MODERN PALETTE (浅色雅致模式) */
@@ -73,25 +70,81 @@
   --glass-backdrop: blur(12px);
 }
 
+/* ========================================= */
+/* MODERN NEUTRAL DARK PALETTE (经典中性灰黑深色模式) */
+/* ========================================= */
+:root[data-theme-mode="dark"],
+[data-theme-mode="dark"],
+.dark-mode {
+  --bg-main: #141414;
+  --bg-surface: #1e1e1e;
+  --bg-surface-elevated: #262626;
+  --bg-surface-subtle: #191919;
+  --bg-surface-hover: #2c2c2c;
+  
+  --border-subtle: #262626;
+  --border-light: #333333;
+  --border-strong: #4d4d4d;
+  
+  --text-primary: #f5f5f5;
+  --text-body: #e5e5e5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #737373;
+  
+  --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
+  --shadow-floating: 0 16px 36px -4px rgba(0, 0, 0, 0.7), 0 6px 12px -2px rgba(0, 0, 0, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme-mode="light"]) {
+    --bg-main: #141414;
+    --bg-surface: #1e1e1e;
+    --bg-surface-elevated: #262626;
+    --bg-surface-subtle: #191919;
+    --bg-surface-hover: #2c2c2c;
+    
+    --border-subtle: #262626;
+    --border-light: #333333;
+    --border-strong: #4d4d4d;
+    
+    --text-primary: #f5f5f5;
+    --text-body: #e5e5e5;
+    --text-secondary: #a3a3a3;
+    --text-muted: #737373;
+    
+    --shadow-subtle: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-card: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
+    --shadow-floating: 0 16px 36px -4px rgba(0, 0, 0, 0.7), 0 6px 12px -2px rgba(0, 0, 0, 0.4);
+  }
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-button, input, select, textarea {
+/* 全局 UI 统一不使用粗体（仅保留 Markdown 语法特别强调如 **粗体**） */
+h1, h2, h3, h4, h5, h6,
+button, input, select, textarea,
+b, strong, th {
   font-family: inherit;
+  font-weight: normal;
 }
 
 body {
   background-color: var(--bg-main);
   color: var(--text-body);
-  font-family: 'Outfit', 'Noto Sans JP', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-japanese, 'Noto Sans JP', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-viewport-height, 100dvh);
   width: 100vw;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 /* App Root Layout */
@@ -99,11 +152,22 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
+  height: var(--app-viewport-height, 100dvh);
+  max-height: var(--app-viewport-height, 100dvh);
   width: 100vw;
+  overflow: hidden;
   background: radial-gradient(circle at 90% 10%, rgba(225, 29, 72, 0.04), transparent 45%),
               radial-gradient(circle at 15% 90%, rgba(79, 70, 229, 0.04), transparent 50%),
               var(--bg-main);
-  transition: all 0.2s ease;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+.dark-mode.app-root-layout,
+[data-theme-mode="dark"].app-root-layout,
+.dark-mode .app-root-layout,
+[data-theme-mode="dark"] .app-root-layout {
+  background: var(--bg-main);
 }
 
 /* ========================================= */
@@ -175,43 +239,67 @@ body {
   --primary-border: #cbd5e1;
 }
 
-/* Pitch Accent Line Overline Color */
-:root[data-pitch-color="theme"],
-[data-pitch-color="theme"],
-.app-root-layout[data-pitch-color="theme"] {
-  --pitch-high-color: var(--primary);
-}
-:root[data-pitch-color="vermilion"],
-[data-pitch-color="vermilion"],
-.app-root-layout[data-pitch-color="vermilion"] {
-  --pitch-high-color: #dc2626;
-}
-:root[data-pitch-color="indigo"],
-[data-pitch-color="indigo"],
-.app-root-layout[data-pitch-color="indigo"] {
-  --pitch-high-color: #2563eb;
+
+
+/* ==================================================================== */
+/* 全局字体体系（默认 Noto Sans JP，联动全局设置） */
+/* ==================================================================== */
+:root,
+body,
+.app-root-layout {
+  --font-japanese-fallback: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'MiSans', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-japanese: var(--font-japanese-fallback);
 }
 
-/* Typography Choices */
+:root[data-font-family="noto-sans"],
+[data-font-family="noto-sans"],
 .app-root-layout[data-font-family="noto-sans"] {
-  --font-japanese: 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Yu Gothic', Meiryo, sans-serif;
+  --font-japanese: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'MiSans', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
 }
+:root[data-font-family="custom"],
+[data-font-family="custom"],
 .app-root-layout[data-font-family="custom"] {
-  --font-japanese: var(--font-custom), 'Noto Sans JP', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic UI', 'Yu Gothic', Meiryo, sans-serif;
+  --font-japanese: var(--font-custom), 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', sans-serif;
 }
-/* 兼容历史配置 */
+:root[data-font-family="noto-serif"],
+[data-font-family="noto-serif"],
 .app-root-layout[data-font-family="noto-serif"] {
   --font-japanese: 'Noto Serif JP', 'Hiragino Mincho ProN', 'Yu Mincho', 'YuMincho', 'MS Mincho', serif;
 }
+:root[data-font-family="zen-maru"],
+[data-font-family="zen-maru"],
 .app-root-layout[data-font-family="zen-maru"] {
   --font-japanese: 'Zen Maru Gothic', 'Hiragino Maru Gothic ProN', 'BIZ UDGothic', 'Rounded Mplus 1c', Meiryo, sans-serif;
 }
+:root[data-font-family="system"],
+[data-font-family="system"],
 .app-root-layout[data-font-family="system"] {
   --font-japanese: 'Hiragino Sans', 'Yu Gothic UI', 'Yu Gothic', Meiryo, system-ui, sans-serif;
 }
 
-.app-root-layout .bubble-content-text,
-.app-root-layout ruby.japanese-ruby-word {
+/* 全站核心界面（顶栏、消息流、输入框、抽屉、模态弹窗、词典悬浮窗）统一应用全局字体 */
+.app-root-layout,
+.app-header,
+.brand-title,
+.brand-subtitle,
+.chat-container-main,
+.chat-input-container,
+.chat-textarea,
+.quick-reply-pill,
+.message-item-wrapper,
+.sender-name,
+.bubble-content-text,
+.chat-history-drawer,
+.modal-overlay,
+.modal-content-base,
+.word-dictionary-popover,
+.selection-lookup-tooltip,
+.learning-plan-modal,
+.grammar-library-modal,
+.knowledge-review-modal,
+.settings-modal-container,
+.kana-modal-container,
+ruby.japanese-ruby-word {
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
 }
 
@@ -264,11 +352,20 @@ body {
 .app-header {
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: var(--glass-backdrop);
+  -webkit-backdrop-filter: var(--glass-backdrop);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   z-index: 20;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+  padding-top: max(env(safe-area-inset-top, 0px), 0px);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.dark-mode .app-header,
+[data-theme-mode="dark"] .app-header {
+  background: rgba(30, 30, 30, 0.88);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.3);
 }
 
 .header-top-row {
@@ -298,14 +395,14 @@ body {
 
 .logo-kanji {
   font-size: 20px;
-  font-weight: 700;
+  font-weight: normal;
   color: #fff;
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
 }
 
 .brand-title {
   font-size: 1.15rem;
-  font-weight: 700;
+  font-weight: normal;
   letter-spacing: -0.01em;
   color: var(--text-primary);
   display: flex;
@@ -315,14 +412,14 @@ body {
 
 .brand-title-sub {
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--primary);
   letter-spacing: 0.02em;
 }
 
 .brand-version-badge {
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-muted);
   background: var(--bg-tertiary, rgba(0, 0, 0, 0.05));
   border: 1px solid var(--border-color);
@@ -366,7 +463,7 @@ body {
 .level-tag {
   background: var(--primary);
   color: #fff;
-  font-weight: 700;
+  font-weight: normal;
   font-size: 0.75rem;
   padding: 2px 7px;
   border-radius: 9999px;
@@ -381,7 +478,7 @@ body {
 .level-edit-hint {
   font-size: 0.7rem;
   color: var(--primary);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .streak-badge-pill {
@@ -417,17 +514,16 @@ body {
 }
 
 .quick-toggle-btn {
-  background: #ffffff;
+  background: transparent;
   border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
   font-size: 0.75rem;
-  padding: 6px 11px;
+  padding: 6px 10px;
   border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   cursor: pointer;
-  box-shadow: var(--shadow-subtle);
   transition: all 0.2s;
   white-space: nowrap;
 }
@@ -435,20 +531,22 @@ body {
 .quick-toggle-btn:hover {
   background: var(--bg-surface-subtle);
   color: var(--text-primary);
-  border-color: var(--border-light);
+  border-color: var(--border-subtle);
+}
+
+/* 隐藏注音时低调微弱化，保持纯正深灰，彻底杜绝黄色高亮 */
+.quick-toggle-btn.mode-hidden {
+  opacity: 0.75;
+}
+
+.quick-toggle-btn.mode-hidden:hover {
+  opacity: 1;
 }
 
 .quick-toggle-btn.btn-highlight {
-  border-color: var(--amber-border);
-  background: var(--amber-bg);
-  color: var(--amber-gold);
-}
-
-.quick-toggle-btn.btn-active-curve {
-  border-color: var(--primary-border);
-  color: var(--primary);
-  background: var(--primary-wash);
-  font-weight: 600;
+  border-color: var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
 }
 
 .header-divider {
@@ -598,11 +696,12 @@ body {
   position: relative;
   flex: 1;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
   padding: 18px 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  scroll-behavior: smooth;
 }
 
 /* Top Scenario Banner */
@@ -648,7 +747,7 @@ body {
 
 .scenario-title-cn {
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -664,7 +763,7 @@ body {
   font-size: 0.7rem;
   padding: 1px 7px;
   border-radius: 9999px;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .scenario-roles {
@@ -703,7 +802,7 @@ body {
   font-size: 0.75rem;
   color: var(--text-muted);
   white-space: nowrap;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .goals-chips {
@@ -750,7 +849,7 @@ body {
 }
 
 .intro-title {
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   margin-bottom: 4px;
 }
@@ -844,7 +943,7 @@ body {
   align-items: center !important;
   justify-content: center !important;
   font-size: 0.9rem;
-  font-weight: 700;
+  font-weight: normal;
   flex-shrink: 0 !important;
   overflow: hidden !important;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
@@ -942,7 +1041,7 @@ body {
 
 .grammar-collected-hint-link {
   flex-shrink: 0;
-  font-weight: 600;
+  font-weight: normal;
   opacity: 0.8;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -952,18 +1051,18 @@ body {
 [data-theme='dark'] .grammar-collected-hint,
 .dark-mode .grammar-collected-hint.is-new,
 [data-theme='dark'] .grammar-collected-hint.is-new {
-  background: rgba(148, 163, 184, 0.14);
-  border-color: rgba(148, 163, 184, 0.28);
-  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #d4d4d4;
 }
 
 .dark-mode .grammar-collected-hint:hover,
 [data-theme='dark'] .grammar-collected-hint:hover,
 .dark-mode .grammar-collected-hint.is-new:hover,
 [data-theme='dark'] .grammar-collected-hint.is-new:hover {
-  background: rgba(129, 140, 248, 0.2);
-  border-color: rgba(129, 140, 248, 0.45);
-  color: #c7d2fe;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f5f5f5;
 }
 
 /* 新单词自动收录提示：统一采用内敛的灰色系，避免过于突兀 */
@@ -1001,7 +1100,7 @@ body {
 
 .word-collected-hint-link {
   flex-shrink: 0;
-  font-weight: 600;
+  font-weight: normal;
   opacity: 0.8;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -1009,16 +1108,16 @@ body {
 
 .dark-mode .word-collected-hint,
 [data-theme='dark'] .word-collected-hint {
-  background: rgba(148, 163, 184, 0.14);
-  border-color: rgba(148, 163, 184, 0.28);
-  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #d4d4d4;
 }
 
 .dark-mode .word-collected-hint:hover,
 [data-theme='dark'] .word-collected-hint:hover {
-  background: rgba(129, 140, 248, 0.2);
-  border-color: rgba(129, 140, 248, 0.45);
-  color: #c7d2fe;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.24);
+  color: #f5f5f5;
 }
 
 .message-header-meta {
@@ -1142,7 +1241,7 @@ body {
 
 .bullet-dot {
   color: var(--primary);
-  font-weight: bold;
+  font-weight: normal;
 }
 
 .bubble-paragraph-spacer {
@@ -1239,7 +1338,7 @@ body {
   align-items: center;
   justify-content: center;
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: normal;
   padding: 1px 5px;
   border-radius: 4px;
   flex-shrink: 0;
@@ -1304,16 +1403,16 @@ body {
 
 /* 深色模式适配 */
 .dark-mode .popunder-arrow {
-  border-bottom-color: #1e293b;
+  border-bottom-color: #202020;
 }
 
 .dark-mode .popunder-bubble {
-  background: #1e293b;
+  background: #202020;
   border-color: var(--primary-border);
 }
 
 .dark-mode .popunder-text {
-  color: #f1f5f9;
+  color: #e5e5e5;
 }
 
 .ruby-text-container {
@@ -1441,7 +1540,7 @@ ruby rt {
   margin-left: 2px;
   color: var(--amber-gold, #d97706);
   font-family: inherit;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .bubble-user .pitch-sub-badge {
@@ -1502,7 +1601,7 @@ ruby rt {
 
 /* Inline Markdown & Block Markdown Styling */
 .md-bold-text {
-  font-weight: 700;
+  font-weight: 700 !important;
   color: var(--text-primary);
   display: inline;
 }
@@ -1532,27 +1631,27 @@ ruby rt {
 
 .bubble-line.md-heading-1 {
   font-size: 1.25em;
-  font-weight: 800;
+  font-weight: normal;
   border-bottom: 1.5px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
   padding-bottom: 4px;
 }
 
 .bubble-line.md-heading-2 {
   font-size: 1.15em;
-  font-weight: 750;
+  font-weight: normal;
   border-bottom: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.4));
   padding-bottom: 3px;
 }
 
 .bubble-line.md-heading-3 {
   font-size: 1.05em;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--primary, #6366f1);
 }
 
 .bubble-line.md-heading-4 {
   font-size: 0.98em;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-secondary);
 }
 
@@ -1607,7 +1706,7 @@ ruby rt {
 }
 
 .md-bold-text .ruby-base {
-  font-weight: 700;
+  font-weight: 700 !important;
   color: inherit;
   vertical-align: baseline;
 }
@@ -1641,7 +1740,7 @@ span.md-inline-code {
   border-radius: 4px;
   padding: 1px 6px;
   font-family: inherit !important;
-  font-weight: 600;
+  font-weight: normal;
   font-size: 0.92em;
   color: var(--primary);
   display: inline-block;
@@ -1666,7 +1765,7 @@ span.md-inline-code {
 }
 
 .numbered-prefix {
-  font-weight: 700;
+  font-weight: normal;
   color: var(--primary);
   font-size: 0.92em;
   flex-shrink: 0;
@@ -1792,7 +1891,7 @@ ruby.japanese-ruby-word.mode-hidden rt.ruby-annotation {
 
 .dict-word-surface {
   font-size: 1.32rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary, #0f172a);
   letter-spacing: -0.2px;
   line-height: 1.3;
@@ -1800,7 +1899,7 @@ ruby.japanese-ruby-word.mode-hidden rt.ruby-annotation {
 
 .dict-word-reading {
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--primary, #4f46e5);
 }
 
@@ -1814,7 +1913,7 @@ ruby.furigana-title-ruby {
 ruby.ruby-item rt,
 ruby.furigana-title-ruby rt {
   font-size: 0.52em;
-  font-weight: 600;
+  font-weight: normal;
   line-height: 1;
   text-align: center;
   user-select: none;
@@ -1861,7 +1960,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .card-back-furigana-title {
   font-size: 1.55rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   margin: 0 0 6px 0;
   line-height: 1.35;
@@ -1882,7 +1981,7 @@ ruby.ruby-item.furigana-hidden rt {
   padding: 1px 5px;
   border-radius: 4px;
   font-size: 0.65rem;
-  font-weight: 700;
+  font-weight: normal;
   background: color-mix(in srgb, #0ea5e9 12%, transparent);
   color: #0284c7;
   border: 1px solid color-mix(in srgb, #0ea5e9 25%, transparent);
@@ -1909,7 +2008,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-pos-badge {
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 1px 6px;
   border-radius: 4px;
   background: rgba(99, 102, 241, 0.1);
@@ -1926,7 +2025,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-level-badge {
   font-size: 0.68rem;
-  font-weight: 700;
+  font-weight: normal;
   padding: 1px 5px;
   border-radius: 4px;
 }
@@ -1958,7 +2057,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-pitch-badge {
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 1px 5px;
   border-radius: 4px;
   background: rgba(245, 158, 11, 0.1);
@@ -2123,7 +2222,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-lemma-word {
   color: var(--primary, #4f46e5);
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .dict-infl-tag {
@@ -2140,7 +2239,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 3px;
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 2px 7px;
   border-radius: 4px;
   border: 1px solid var(--border-subtle, #e2e8f0);
@@ -2163,7 +2262,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 5px;
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-muted, #64748b);
   margin-bottom: 4px;
   letter-spacing: 0.2px;
@@ -2172,7 +2271,7 @@ ruby.ruby-item.furigana-hidden rt {
 /* 释义文字与分条列表 */
 .dict-meaning-text {
   font-size: 0.92rem;
-  font-weight: 600;
+  font-weight: normal;
   line-height: 1.5;
   color: var(--text-primary, #0f172a);
 }
@@ -2188,7 +2287,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-meaning-item {
   font-size: 0.88rem;
-  font-weight: 600;
+  font-weight: normal;
   line-height: 1.45;
   color: var(--text-primary, #0f172a);
   padding-left: 2px;
@@ -2234,7 +2333,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-ex-jp {
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary, #0f172a);
 }
 
@@ -2290,7 +2389,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 5px;
   font-size: 0.74rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 4px 10px;
   border-radius: 6px;
   border: 1px solid var(--primary-border, rgba(79, 70, 229, 0.3));
@@ -2317,7 +2416,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 4px;
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: normal;
   color: #059669;
   background: rgba(16, 185, 129, 0.1);
   padding: 3px 8px;
@@ -2362,7 +2461,7 @@ ruby.ruby-item.furigana-hidden rt {
 /* 整段原文标题：长句自动换行，行距舒展 */
 .dict-query-text {
   font-size: 1.06rem;
-  font-weight: 700;
+  font-weight: normal;
   line-height: 1.75;
   color: var(--text-primary, #0f172a);
   letter-spacing: 0.01em;
@@ -2405,11 +2504,11 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .dict-query-text .dict-ruby-base {
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .dict-query-text .dict-ruby-affix {
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .dict-query-text .dict-ruby-rt {
@@ -2440,7 +2539,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-translation-text {
   font-size: 1rem;
-  font-weight: 700;
+  font-weight: normal;
   line-height: 1.75;
   color: var(--text-primary, #0f172a);
   letter-spacing: 0.01em;
@@ -2469,13 +2568,13 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dict-bd-jp {
   font-size: 0.84rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary, #0f172a);
 }
 
 .dict-bd-role {
   font-size: 0.66rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 1px 5px;
   border-radius: 4px;
   color: #4f46e5;
@@ -2768,7 +2867,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-bottom-color: #ffffff;
 }
 
-/* 划词查词浮动气泡按钮 */
+/* 划词查词/复制浮动气泡按钮 */
 @keyframes selectionTooltipFadeIn {
   0% {
     opacity: 0;
@@ -2786,45 +2885,123 @@ ruby.ruby-item.furigana-hidden rt {
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  background: #0f172a;
+  gap: 2px;
+  background: rgba(15, 23, 42, 0.94);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   color: #ffffff;
-  padding: 5px 12px;
-  border-radius: 20px;
-  font-size: 0.74rem;
-  font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
-  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 24px;
+  font-size: 0.78rem;
+  font-weight: normal;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.18);
   animation: selectionTooltipFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) both;
   user-select: none;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  -webkit-user-select: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   white-space: nowrap;
   transform-origin: center center;
 }
 
-.selection-lookup-tooltip:hover {
-  background: var(--primary, #4f46e5);
-  transform: translateX(-50%) scale(1.04);
+.selection-tooltip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  color: #f1f5f9;
+  font-size: 0.76rem;
+  font-weight: normal;
+  padding: 5px 9px;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  line-height: 1;
 }
+
+.selection-tooltip-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+}
+
+.selection-tooltip-btn:active {
+  transform: scale(0.94);
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.selection-tooltip-btn.btn-lookup:hover {
+  background: var(--primary, #4f46e5);
+  color: #ffffff;
+}
+
+.selection-tooltip-btn.btn-copy {
+  padding: 5px 8px;
+  justify-content: center;
+}
+
+.selection-tooltip-btn.btn-copy:hover {
+  background: rgba(16, 185, 129, 0.85);
+  color: #ffffff;
+}
+
+.selection-tooltip-btn.btn-copied {
+  background: #10b981 !important;
+  color: #ffffff !important;
+}
+
+.selection-tooltip-divider {
+  width: 1px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.22);
+  margin: 0 1px;
+}
+
+/* 移动端触摸优化：增大点击区域与触觉反馈 */
+@media (pointer: coarse), (max-width: 768px) {
+  .selection-lookup-tooltip {
+    padding: 5px 8px;
+    border-radius: 28px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.42);
+  }
+
+  .selection-tooltip-btn {
+    padding: 7px 12px;
+    font-size: 0.82rem;
+  }
+
+  .selection-tooltip-btn.btn-copy {
+    padding: 7px 10px;
+  }
+
+  .selection-tooltip-divider {
+    height: 18px;
+  }
+}
+
+/* 禁用移动端默认系统长按 Callout 弹出菜单，让自定义划词胶囊完全接管 */
+body, .message-bubble, .bubble-content, .bubble-content-text, .chat-container-main {
+  -webkit-touch-callout: none;
+}
+
 
 /* =========================================================
    深色模式适配 (Dark Mode)
    ========================================================= */
 
 .dark-mode .word-dictionary-popover {
-  background: #1e293b;
+  background: #1e1e1e;
   border-color: rgba(255, 255, 255, 0.12);
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
 }
 
 .dark-mode .word-dictionary-popover.placed-bottom .popover-anchor-arrow {
-  background: #1e293b;
+  background: #1e1e1e;
   border-top-color: rgba(255, 255, 255, 0.12);
   border-left-color: rgba(255, 255, 255, 0.12);
 }
 
 .dark-mode .word-dictionary-popover.placed-top .popover-anchor-arrow {
-  background: #1e293b;
+  background: #1e1e1e;
   border-bottom-color: rgba(255, 255, 255, 0.12);
   border-right-color: rgba(255, 255, 255, 0.12);
 }
@@ -2835,7 +3012,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .dark-mode .dict-word-surface {
-  color: #f8fafc;
+  color: #f5f5f5;
 }
 
 .dark-mode .dict-word-reading {
@@ -2843,13 +3020,13 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .dark-mode .dict-lemma-card {
-  background: rgba(99, 102, 241, 0.12);
-  border-color: rgba(99, 102, 241, 0.25);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
 }
 
 .dark-mode .dict-meaning-text,
 .dark-mode .dict-meaning-item {
-  color: #f1f5f9;
+  color: #e5e5e5;
 }
 
 .dark-mode .dict-detail-card {
@@ -2858,7 +3035,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .dark-mode .dict-detail-text {
-  color: #cbd5e1;
+  color: #d4d4d4;
 }
 
 .dark-mode .dict-example-item {
@@ -2867,11 +3044,11 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .dark-mode .dict-ex-jp {
-  color: #f8fafc;
+  color: #f5f5f5;
 }
 
 .dark-mode .dict-ex-zh {
-  color: #94a3b8;
+  color: #a3a3a3;
 }
 
 .dark-mode .dict-popover-footer {
@@ -2880,29 +3057,29 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .dark-mode .dict-lemma-switch-btn {
-  background: #0f172a;
+  background: #141414;
   border-color: rgba(255, 255, 255, 0.12);
-  color: #94a3b8;
+  color: #a3a3a3;
 }
 
 .dark-mode .dict-lemma-switch-btn:hover {
-  color: #a5b4fc;
-  border-color: #6366f1;
+  color: var(--primary-light, #a5b4fc);
+  border-color: var(--primary, #6366f1);
 }
 
 .dark-mode .dict-speak-btn {
-  background: #0f172a;
+  background: #141414;
   border-color: rgba(255, 255, 255, 0.12);
   color: #a5b4fc;
 }
 
 .dark-mode .dict-speak-btn:hover {
-  background: #4f46e5;
+  background: var(--primary, #4f46e5);
   color: #ffffff;
 }
 
 .dark-mode .dict-ai-btn {
-  background: #0f172a;
+  background: #141414;
   border-color: rgba(255, 255, 255, 0.12);
   color: #c084fc;
 }
@@ -3129,7 +3306,7 @@ ruby.ruby-item.furigana-hidden rt {
 .edit-action-btn.btn-confirm {
   background: #ffffff;
   color: var(--primary, #4f46e5);
-  font-weight: 600;
+  font-weight: normal;
   border: 1px solid #ffffff;
   height: 32px;
   padding: 0 14px;
@@ -3260,7 +3437,7 @@ ruby.ruby-item.furigana-hidden rt {
   font-size: 0.7rem;
   padding: 1px 6px;
   border-radius: 4px;
-  font-weight: 600;
+  font-weight: normal;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3298,7 +3475,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .corrected-sentence {
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .correction-explanation {
@@ -3316,7 +3493,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .explanation-label {
   color: var(--indigo-accent);
-  font-weight: 700;
+  font-weight: normal;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -3341,7 +3518,7 @@ ruby.ruby-item.furigana-hidden rt {
 .better-label {
   font-size: 0.75rem;
   color: var(--primary);
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .better-text {
@@ -3387,7 +3564,7 @@ ruby.ruby-item.furigana-hidden rt {
   backdrop-filter: none;
   border-top: none;
   box-shadow: none;
-  padding: 8px 24px 18px 24px;
+  padding: 8px 24px max(env(safe-area-inset-bottom, 0px), 18px) 24px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3408,7 +3585,7 @@ ruby.ruby-item.furigana-hidden rt {
   font-size: 0.75rem;
   color: var(--text-muted);
   white-space: nowrap;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .quick-chips-scroll {
@@ -3527,7 +3704,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: var(--radius-md);
   padding: 7px 18px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: normal;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3565,13 +3742,14 @@ ruby.ruby-item.furigana-hidden rt {
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(15, 23, 42, 0.55);
   backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: max(20px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(20px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
   animation: modalFadeIn 0.2s ease;
 }
 
@@ -3653,7 +3831,7 @@ ruby.ruby-item.furigana-hidden rt {
   background: #ffffff;
   border-color: var(--border-subtle);
   border-bottom-color: #ffffff;
-  font-weight: 600;
+  font-weight: normal;
   margin-bottom: -1px;
 }
 
@@ -3693,7 +3871,7 @@ ruby.ruby-item.furigana-hidden rt {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 700;
+  font-weight: normal;
   font-size: 0.95rem;
   color: var(--text-primary);
   padding-bottom: 8px;
@@ -3744,7 +3922,7 @@ ruby.ruby-item.furigana-hidden rt {
   background: var(--primary);
   border-color: var(--primary);
   color: #ffffff;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 /* ======================================================== */
@@ -3765,7 +3943,7 @@ ruby.ruby-item.furigana-hidden rt {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 700;
+  font-weight: normal;
   font-size: 0.98rem;
   color: var(--text-primary);
 }
@@ -3782,7 +3960,7 @@ ruby.ruby-item.furigana-hidden rt {
   gap: 5px;
   padding: 4px 10px;
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: normal;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: #ffffff;
@@ -3813,7 +3991,7 @@ ruby.ruby-item.furigana-hidden rt {
   border: 1px solid #a7f3d0;
   color: #065f46;
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 6px 12px;
   border-radius: var(--radius-md);
   animation: fadeInMsg 0.2s ease;
@@ -3835,7 +4013,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 6px;
   font-size: 0.86rem;
-  font-weight: 700;
+  font-weight: normal;
   color: #86198f;
 }
 
@@ -3872,7 +4050,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: var(--radius-sm);
   padding: 6px 14px;
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   transition: all 0.15s ease;
 }
@@ -3904,7 +4082,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .preset-panel-header {
   font-size: 0.82rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-secondary);
 }
 
@@ -3965,12 +4143,12 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   justify-content: center;
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .preset-card-title {
   font-size: 0.84rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   flex: 1;
 }
@@ -4042,7 +4220,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   justify-content: space-between;
   font-size: 0.84rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -4066,7 +4244,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   justify-content: center;
   font-size: 1.35rem;
-  font-weight: 700;
+  font-weight: normal;
   flex-shrink: 0;
   overflow: hidden;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
@@ -4095,7 +4273,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .avatar-default-letter {
   font-size: 1.3rem;
-  font-weight: 700;
+  font-weight: normal;
   line-height: 1;
 }
 
@@ -4117,7 +4295,7 @@ ruby.ruby-item.furigana-hidden rt {
   gap: 5px;
   padding: 5px 10px;
   font-size: 0.76rem;
-  font-weight: 600;
+  font-weight: normal;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -4199,7 +4377,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .cropper-title {
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -4314,21 +4492,21 @@ ruby.ruby-item.furigana-hidden rt {
 
 .control-label-title {
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-body);
 }
 
 .control-label-value {
   font-size: 0.72rem;
   font-family: monospace;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-muted);
 }
 
 .control-label-badge {
   font-size: 0.72rem;
   font-family: monospace;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--primary);
   background: var(--primary-wash);
   border: 1px solid var(--primary-border);
@@ -4444,23 +4622,93 @@ ruby.ruby-item.furigana-hidden rt {
   margin-left: 4px;
 }
 
-.theme-palette-grid {
+.theme-mode-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
 }
 
-.theme-card-option {
+.theme-mode-card {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 8px;
   padding: 10px 12px;
   border: 1.5px solid var(--border-subtle);
   border-radius: var(--radius-md);
   cursor: pointer;
-  background: #ffffff;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.85rem;
   transition: all 0.15s ease;
   position: relative;
+  outline: none;
+  min-height: 42px;
+  box-sizing: border-box;
+}
+
+.theme-mode-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+.theme-mode-card.active {
+  border-color: var(--primary);
+  background: var(--primary-wash);
+  color: var(--primary);
+  box-shadow: 0 1px 4px var(--primary-glow);
+}
+
+.dark-mode .theme-mode-card.active,
+[data-theme-mode="dark"] .theme-mode-card.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
+}
+
+.theme-mode-emoji {
+  font-size: 1.05rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.theme-mode-title {
+  font-size: 0.84rem;
+  font-weight: normal;
+  color: inherit;
+}
+
+.theme-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .theme-palette-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+  }
+}
+
+.theme-card-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1.5px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.82rem;
+  transition: all 0.15s ease;
+  position: relative;
+  outline: none;
+  min-height: 38px;
+  box-sizing: border-box;
 }
 
 .theme-card-option:hover {
@@ -4471,37 +4719,33 @@ ruby.ruby-item.furigana-hidden rt {
 .theme-card-option.active {
   border-color: var(--primary);
   background: var(--primary-wash);
+  color: var(--primary);
+  box-shadow: 0 1px 4px var(--primary-glow);
+}
+
+.dark-mode .theme-card-option.active,
+[data-theme-mode="dark"] .theme-card-option.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
 }
 
 .theme-color-dot {
-  width: 18px;
-  height: 18px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   flex-shrink: 0;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
-}
-
-.theme-meta {
-  flex: 1;
-  min-width: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .theme-name {
-  font-size: 0.84rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.theme-desc {
-  font-size: 0.7rem;
-  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: normal;
+  color: inherit;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .theme-check-icon {
   flex-shrink: 0;
+  margin-left: -2px;
 }
 
 .font-options-grid {
@@ -4530,7 +4774,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .font-option-title {
   font-size: 0.86rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -4575,7 +4819,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .custom-font-field-label {
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -4602,7 +4846,7 @@ ruby.ruby-item.furigana-hidden rt {
   gap: 6px;
   padding: 7px 12px;
   font-size: 0.78rem;
-  font-weight: 600;
+  font-weight: normal;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
@@ -4704,13 +4948,13 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .preview-active-font {
-  font-weight: 600;
+  font-weight: normal;
   color: var(--primary);
 }
 
 .custom-font-preview-card .preview-text-jp {
   font-size: 1.05rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   line-height: 1.5;
 }
@@ -4748,7 +4992,7 @@ ruby.ruby-item.furigana-hidden rt {
   background: var(--primary);
   border-color: var(--primary);
   color: #ffffff;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 /* Memory Mode Cards Grid (Settings UI) */
@@ -4797,7 +5041,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .memory-mode-title {
   font-size: 0.83rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   display: flex;
   align-items: center;
@@ -4810,7 +5054,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .memory-mode-cost {
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--bg-surface-subtle);
@@ -4844,16 +5088,15 @@ ruby.ruby-item.furigana-hidden rt {
 
 .form-label {
   font-size: 0.84rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
 .form-input,
-.form-select,
 .form-textarea {
   width: 100%;
   padding: 9px 12px;
-  background: #ffffff;
+  background: var(--bg-surface, #ffffff);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   font-size: 0.9rem;
@@ -4862,11 +5105,45 @@ ruby.ruby-item.furigana-hidden rt {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+.form-select {
+  width: 100%;
+  padding: 9px 36px 9px 12px !important;
+  background-color: var(--bg-surface, #ffffff);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 12px center !important;
+  background-size: 15px 15px !important;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  outline: none;
+  cursor: pointer;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.form-select::-ms-expand {
+  display: none;
+}
+
+.form-select:hover {
+  border-color: var(--border-light);
+}
+
 .form-input:focus,
 .form-select:focus,
 .form-textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.form-select option {
+  background-color: var(--bg-surface, #ffffff);
+  color: var(--text-primary);
+  padding: 8px 12px;
 }
 
 .form-tip {
@@ -4889,7 +5166,7 @@ ruby.ruby-item.furigana-hidden rt {
   padding: 1px 7px;
   border-radius: 9999px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .text-action-btn {
@@ -4907,10 +5184,90 @@ ruby.ruby-item.furigana-hidden rt {
   text-decoration: underline;
 }
 
+/* 全局现代化 Range 滑块控件美化 */
+input[type="range"],
 .form-range {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  accent-color: var(--primary);
+  height: 6px;
+  background: var(--border-light, #e2e8f0);
+  border-radius: 9999px;
+  outline: none;
+  margin: 10px 0;
   cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+input[type="range"]:focus,
+.form-range:focus {
+  outline: none;
+}
+
+/* WebKit 滑道与滑块 */
+input[type="range"]::-webkit-slider-runnable-track,
+.form-range::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 6px;
+  background: transparent;
+  border-radius: 9999px;
+  border: none;
+}
+
+input[type="range"]::-webkit-slider-thumb,
+.form-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid var(--primary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  cursor: pointer;
+  margin-top: -6px;
+  transition: transform 0.12s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.12s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover,
+.form-range::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25), 0 0 0 3px var(--primary-glow);
+}
+
+input[type="range"]::-webkit-slider-thumb:active,
+.form-range::-webkit-slider-thumb:active {
+  transform: scale(1.05);
+  background: var(--primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 0 4px var(--primary-glow);
+}
+
+/* Firefox 滑道与滑块 */
+input[type="range"]::-moz-range-track,
+.form-range::-moz-range-track {
+  width: 100%;
+  height: 6px;
+  background: var(--border-light, #e2e8f0);
+  border-radius: 9999px;
+  border: none;
+}
+
+input[type="range"]::-moz-range-thumb,
+.form-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid var(--primary);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+input[type="range"]::-moz-range-thumb:hover,
+.form-range::-moz-range-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 .range-labels {
@@ -4926,42 +5283,88 @@ ruby.ruby-item.furigana-hidden rt {
   gap: 12px;
 }
 
+/* 设置项卡片式拨片开关 (Switch Toggle) */
 .checkbox-group {
   background: var(--bg-surface-subtle);
   padding: 12px 14px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .checkbox-label {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   cursor: pointer;
-}
-
-.form-checkbox {
-  margin-top: 3px;
-  accent-color: var(--primary);
-  width: 16px;
-  height: 16px;
-  cursor: pointer;
+  user-select: none;
 }
 
 .checkbox-text-block {
+  order: 1;
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.checkbox-label .form-checkbox {
+  order: 2;
 }
 
 .checkbox-title {
   font-size: 0.88rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
 .checkbox-desc {
   font-size: 0.75rem;
   color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.form-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 9999px;
+  background: var(--border-strong, #cbd5e1);
+  outline: none;
+  cursor: pointer;
+  transition: background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.15s ease;
+  flex-shrink: 0;
+  margin: 0;
+  border: none;
+}
+
+.form-checkbox::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.2s ease;
+}
+
+.form-checkbox:checked {
+  background: var(--primary);
+}
+
+.form-checkbox:checked::before {
+  transform: translateX(16px);
+}
+
+.form-checkbox:focus-visible {
+  box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
 .modal-footer {
@@ -4979,7 +5382,7 @@ ruby.ruby-item.furigana-hidden rt {
   border: none;
   padding: 9px 18px;
   border-radius: var(--radius-md);
-  font-weight: 600;
+  font-weight: normal;
   font-size: 0.9rem;
   cursor: pointer;
   display: inline-flex;
@@ -5036,7 +5439,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .modal-title-group h2 {
   font-size: 1.1rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -5084,7 +5487,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 8px;
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -5108,7 +5511,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .level-choice-btn .lvl-tag {
   font-size: 0.85rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -5180,7 +5583,7 @@ ruby.ruby-item.furigana-hidden rt {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .mastered-chip {
@@ -5204,13 +5607,13 @@ ruby.ruby-item.furigana-hidden rt {
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .stage-title {
   font-size: 1.05rem;
   color: var(--text-primary);
-  font-weight: 700;
+  font-weight: normal;
   margin-top: 2px;
 }
 
@@ -5225,7 +5628,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: normal;
   transition: all 0.2s;
 }
 
@@ -5244,7 +5647,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .goal-label {
   color: var(--primary);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .goal-text {
@@ -5266,7 +5669,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .progress-percentage {
-  font-weight: 700;
+  font-weight: normal;
   color: var(--primary);
 }
 
@@ -5424,7 +5827,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .kana-hiragana {
   font-size: 1.3rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
 }
@@ -5432,7 +5835,7 @@ ruby.ruby-item.furigana-hidden rt {
 .kana-katakana {
   font-size: 0.78rem;
   color: var(--primary);
-  font-weight: 600;
+  font-weight: normal;
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
 }
 
@@ -5468,7 +5871,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .large-hira {
   font-size: 3rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
 }
@@ -5482,7 +5885,7 @@ ruby.ruby-item.furigana-hidden rt {
 .large-romaji {
   font-size: 1.2rem;
   color: var(--text-secondary);
-  font-weight: 600;
+  font-weight: normal;
   margin-top: -4px;
 }
 
@@ -5491,7 +5894,7 @@ ruby.ruby-item.furigana-hidden rt {
   border: none;
   color: #fff;
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 6px 14px;
   border-radius: 9999px;
   display: flex;
@@ -5513,7 +5916,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 6px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   margin-bottom: 4px;
 }
@@ -5612,13 +6015,13 @@ ruby.ruby-item.furigana-hidden rt {
   font-size: 0.7rem;
   padding: 2px 7px;
   border-radius: 4px;
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .grammar-card-title {
   font-size: 1.1rem;
   color: var(--text-primary);
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .grammar-meaning {
@@ -5644,7 +6047,7 @@ ruby.ruby-item.furigana-hidden rt {
 .structure-code {
   color: var(--primary);
   font-family: monospace;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .grammar-explanation-text {
@@ -5664,7 +6067,7 @@ ruby.ruby-item.furigana-hidden rt {
 .examples-header {
   font-size: 0.75rem;
   color: var(--text-muted);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .example-row {
@@ -5721,7 +6124,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .form-label {
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   display: flex;
   align-items: baseline;
@@ -5734,8 +6137,8 @@ ruby.ruby-item.furigana-hidden rt {
   font-weight: normal;
 }
 
-.form-select, .form-input {
-  background: #ffffff;
+.form-input {
+  background: var(--bg-surface, #ffffff);
   border: 1px solid var(--border-light);
   color: var(--text-primary);
   padding: 8px 12px;
@@ -5745,7 +6148,7 @@ ruby.ruby-item.furigana-hidden rt {
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.form-select:focus, .form-input:focus {
+.form-input:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-glow);
 }
@@ -5773,7 +6176,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .token-box-header span {
   color: var(--amber-gold) !important;
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .switch-toggle-label {
@@ -5819,7 +6222,7 @@ ruby.ruby-item.furigana-hidden rt {
 .switch-text {
   font-size: 0.82rem;
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .token-explanation {
@@ -5844,7 +6247,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .slider-value {
   color: var(--primary);
-  font-weight: 700;
+  font-weight: normal;
 }
 
 .range-input {
@@ -5919,7 +6322,7 @@ ruby.ruby-item.furigana-hidden rt {
   padding: 7px 20px;
   border-radius: var(--radius-md);
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: normal;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -5982,7 +6385,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .history-drawer-header {
-  padding: 18px 20px;
+  padding: max(18px, calc(env(safe-area-inset-top, 0px) + 14px)) 20px 14px 20px;
   border-bottom: 1px solid var(--border-light, #e2e8f0);
   display: flex;
   align-items: center;
@@ -5999,7 +6402,7 @@ ruby.ruby-item.furigana-hidden rt {
 .drawer-heading {
   margin: 0;
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary, #0f172a);
 }
 
@@ -6042,7 +6445,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: var(--radius-md, 8px);
   padding: 10px 16px;
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: normal;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6199,7 +6602,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 4px;
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 2px 7px;
   border-radius: 9999px;
   white-space: nowrap;
@@ -6239,7 +6642,7 @@ ruby.ruby-item.furigana-hidden rt {
 .session-title {
   margin: 0;
   font-size: 0.88rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary, #1e293b);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6252,7 +6655,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 5px;
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--primary, #e11d48);
   white-space: nowrap;
   flex-shrink: 0;
@@ -6400,7 +6803,7 @@ ruby.ruby-item.furigana-hidden rt {
   background: #fee2e2;
   color: #dc2626;
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 1px 5px;
   line-height: 1.2;
 }
@@ -6458,7 +6861,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .confirm-text {
   color: #dc2626;
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .btn-danger-confirm {
@@ -6486,7 +6889,7 @@ ruby.ruby-item.furigana-hidden rt {
   background: var(--primary, #e11d48);
   color: #ffffff;
   font-size: 0.65rem;
-  font-weight: 700;
+  font-weight: normal;
   padding: 1px 5px;
   border-radius: 9999px;
   margin-left: 3px;
@@ -6528,14 +6931,14 @@ ruby.ruby-item.furigana-hidden rt {
 
 .knowledge-title-main h2 {
   font-size: 1.15rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   margin: 0;
 }
 
 .knowledge-memory-tag {
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: normal;
   color: #4f46e5;
   background: #eef2ff;
   border: 1px solid #c7d2fe;
@@ -6584,7 +6987,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .stat-value {
   font-size: 1.25rem;
-  font-weight: 800;
+  font-weight: normal;
   color: var(--text-primary, #0f172a);
 }
 
@@ -6662,7 +7065,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: var(--radius-md, 8px);
   padding: 10px 16px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   white-space: nowrap;
   box-shadow: 0 2px 8px rgba(225, 29, 72, 0.25);
@@ -6700,7 +7103,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: var(--radius-md, 8px);
   padding: 6px 12px;
   font-size: 0.84rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-secondary, #475569);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -6754,7 +7157,7 @@ ruby.ruby-item.furigana-hidden rt {
 .knowledge-filter-pill.active {
   background: #ffffff;
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: normal;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
 }
 
@@ -6766,7 +7169,7 @@ ruby.ruby-item.furigana-hidden rt {
   color: var(--text-secondary, #475569);
   border-radius: 999px;
   font-size: 0.68rem;
-  font-weight: 700;
+  font-weight: normal;
   padding: 0 5px;
   min-width: 16px;
   height: 16px;
@@ -6843,7 +7246,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: var(--radius-md, 8px);
   padding: 6px 12px;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-secondary, #475569);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -6887,7 +7290,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 4px;
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 2px 7px;
   border-radius: 9999px;
   white-space: nowrap;
@@ -6953,7 +7356,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .word-surface {
   font-size: 1.15rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
 }
@@ -6976,7 +7379,7 @@ ruby.ruby-item.furigana-hidden rt {
 .card-level-tag,
 .word-level-tag {
   font-size: 0.66rem;
-  font-weight: 700;
+  font-weight: normal;
   color: #b45309;
   background: #fef3c7;
   border: 1px solid #fde68a;
@@ -7106,21 +7509,21 @@ ruby.ruby-item.furigana-hidden rt {
 .mastery-chip-btn.active.chip-learning {
   background: #eef2ff;
   color: #4338ca;
-  font-weight: 600;
+  font-weight: normal;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .mastery-chip-btn.active.chip-reviewing {
   background: #fef3c7;
   color: #b45309;
-  font-weight: 600;
+  font-weight: normal;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
 .mastery-chip-btn.active.chip-mastered {
   background: #ecfdf5;
   color: #047857;
-  font-weight: 600;
+  font-weight: normal;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
@@ -7233,7 +7636,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .grammar-title {
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   margin: 0;
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
@@ -7255,7 +7658,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .grammar-level-badge {
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: normal;
   padding: 2px 6px;
   border-radius: 4px;
   background: #eff6ff;
@@ -7274,14 +7677,14 @@ ruby.ruby-item.furigana-hidden rt {
 
 .grammar-meaning-label {
   font-size: 0.8rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--primary, #e11d48);
   flex-shrink: 0;
 }
 
 .grammar-meaning-text {
   font-size: 0.88rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   line-height: 1.5;
 }
@@ -7300,7 +7703,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .grammar-structure-label {
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: normal;
   color: #0f766e;
   flex-shrink: 0;
 }
@@ -7352,7 +7755,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .grammar-explanation-box .explanation-label {
   font-size: 0.76rem;
-  font-weight: 700;
+  font-weight: normal;
   color: #0d9488;
 }
 
@@ -7417,7 +7820,7 @@ ruby.ruby-item.furigana-hidden rt {
    --------------------------------------------------------- */
 .favorite-text {
   font-size: 1.02rem;
-  font-weight: 700;
+  font-weight: normal;
   line-height: 2;
   color: var(--text-primary, #0f172a);
   word-break: break-word;
@@ -7453,7 +7856,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .favorite-bd-jp {
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary, #0f172a);
 }
 
@@ -7491,7 +7894,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .knowledge-empty-state p {
   font-size: 0.95rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-secondary, #64748b);
   margin: 0 0 6px 0;
 }
@@ -7566,7 +7969,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .card-type-tag {
   font-size: 0.72rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-muted, #94a3b8);
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -7579,7 +7982,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .card-japanese-surface {
   font-size: 2.4rem;
-  font-weight: 800;
+  font-weight: normal;
   color: var(--text-primary);
   margin: 0;
   letter-spacing: 2px;
@@ -7588,7 +7991,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .card-grammar-title {
   font-size: 1.8rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
   margin: 0;
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
@@ -7619,7 +8022,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .card-reading-text {
   font-size: 1.3rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--primary, #e11d48);
   font-family: var(--font-japanese, 'Noto Sans JP', sans-serif);
 }
@@ -7660,12 +8063,12 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .card-meaning-label {
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-secondary, #475569);
 }
 
 .card-meaning-text {
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary);
 }
 
@@ -7682,7 +8085,7 @@ ruby.ruby-item.furigana-hidden rt {
 .card-grammar-structure .structure-content {
   font-family: inherit !important;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: normal;
   color: #0f766e;
   background: transparent;
   padding: 0;
@@ -7690,7 +8093,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .structure-label {
-  font-weight: 600;
+  font-weight: normal;
   color: #15803d;
   margin-right: 6px;
   font-family: inherit !important;
@@ -7705,7 +8108,7 @@ ruby.ruby-item.furigana-hidden rt {
 }
 
 .example-jp-line {
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary);
   margin-bottom: 4px;
 }
@@ -7730,7 +8133,7 @@ ruby.ruby-item.furigana-hidden rt {
   padding: 10px;
   border-radius: var(--radius-md, 8px);
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   border: none;
   transition: all 0.15s ease;
@@ -7778,7 +8181,7 @@ ruby.ruby-item.furigana-hidden rt {
   border: 1px solid #cbd5e1;
   color: #475569;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 3px 8px;
   border-radius: 4px;
   cursor: pointer;
@@ -7823,7 +8226,7 @@ ruby.ruby-item.furigana-hidden rt {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-weight: 700;
+  font-weight: normal;
   font-size: 0.95rem;
   color: var(--text-primary);
 }
@@ -7834,7 +8237,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: 9999px;
   background: var(--primary-wash);
   color: var(--primary);
-  font-weight: 600;
+  font-weight: normal;
   border: 1px solid var(--primary-border);
 }
 
@@ -7858,7 +8261,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .size-percent-badge {
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--primary);
   background: var(--primary-wash);
   padding: 1px 7px;
@@ -7880,7 +8283,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .slider-val-tag {
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-secondary);
   min-width: 40px;
   text-align: right;
@@ -7924,7 +8327,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-color: var(--primary);
   background: var(--primary-wash);
   color: var(--primary);
-  font-weight: 600;
+  font-weight: normal;
 }
 
 .color-dot {
@@ -8011,7 +8414,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .preview-badge {
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-muted);
 }
 
@@ -8023,27 +8426,103 @@ ruby.ruby-item.furigana-hidden rt {
 .preview-stats code {
   color: var(--primary);
   font-family: monospace;
-  font-weight: 600;
+  font-weight: normal;
 }
 
-.preview-text-box {
-  background: #ffffff;
+.preview-chat-container {
+  padding: 8px 4px 6px 4px;
+}
+
+.preview-message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.preview-avatar-circle {
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.92rem;
+  flex-shrink: 0;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-sizing: border-box;
+}
+
+.preview-avatar-circle .avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.preview-message-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.preview-sender-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.2;
+}
+
+.preview-sender-name {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.preview-sender-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.preview-bubble-styled {
+  background: var(--bg-surface, #ffffff);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 16px 20px;
-  font-size: 1.05rem;
-  line-height: var(--app-line-height, 1.8);
-  box-shadow: var(--shadow-subtle);
+  border-top-left-radius: 4px;
+  box-shadow: var(--shadow-card);
+  transition: padding 0.2s ease, font-size 0.2s ease, line-height 0.2s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.subtitle-cards-preview-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.subtitle-cards-preview-grid .history-session-card {
+  cursor: default;
+  transform: none;
+}
+
+.subtitle-cards-preview-grid .history-session-card:hover {
+  transform: none;
+}
+
+.preview-bubble-body {
+  line-height: inherit;
+  color: var(--text-body);
+  word-break: break-word;
 }
 
 .preview-line {
   position: relative;
   line-height: inherit;
-  margin-bottom: 2px;
-}
-
-.preview-line:last-child {
-  margin-bottom: 0;
 }
 
 .preview-tip-text {
@@ -8052,6 +8531,7 @@ ruby.ruby-item.furigana-hidden rt {
   line-height: 1.4;
   margin: 0;
 }
+
 
 /* Parenthesized Text & Action Demeanor Styling (对话带括号文字自动灰显) */
 .parenthesis-text,
@@ -8307,7 +8787,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .field-hint-tag {
   font-size: 0.68rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-muted, #64748b);
 }
 
@@ -8353,7 +8833,7 @@ ruby.ruby-item.furigana-hidden rt {
   align-items: center;
   gap: 4px;
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: normal;
   padding: 4px 10px;
   background: #16a34a;
   color: #ffffff;
@@ -8431,33 +8911,21 @@ ruby.ruby-item.furigana-hidden rt {
   margin-top: 10px;
 }
 
-.subtitle-sample-tags-row {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 10px 0;
+.subtitle-cards-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 10px 0 6px 0;
 }
 
-.sample-badge-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+@media (max-width: 640px) {
+  .subtitle-cards-preview-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
-.sample-item-label {
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--text-muted, #64748b);
-  width: 70px;
-  flex-shrink: 0;
-}
-
-.preview-badge-style,
-.preview-plain-style {
-  font-size: 0.82rem;
-  color: var(--text-primary, #1e293b);
-  font-weight: 500;
-  letter-spacing: 0.02em;
+.subtitle-cards-preview-grid .history-session-card {
+  cursor: default;
 }
 
 /* ==========================================================================
@@ -8519,7 +8987,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .backup-stat-chip .stat-val {
   font-size: 0.95rem;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--text-primary, #1e293b);
 }
 
@@ -8540,7 +9008,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: 8px;
   padding: 8px 18px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   transition: all 0.15s ease;
@@ -8582,7 +9050,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .dropzone-title {
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary, #1e293b);
 }
 
@@ -8620,7 +9088,7 @@ ruby.ruby-item.furigana-hidden rt {
 .inspection-title-group h4 {
   margin: 0;
   font-size: 0.92rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary, #1e293b);
 }
 
@@ -8673,7 +9141,7 @@ ruby.ruby-item.furigana-hidden rt {
 
 .mode-selector-title {
   font-size: 0.82rem;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--text-primary, #1e293b);
 }
 
@@ -8686,18 +9154,36 @@ ruby.ruby-item.furigana-hidden rt {
 .mode-option-card {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  border: 1.5px solid #e2e8f0;
-  border-radius: 10px;
+  gap: 12px;
+  border: 1.5px solid var(--border-subtle, #e2e8f0);
+  border-radius: 12px;
   padding: 12px 14px;
   cursor: pointer;
-  background: #ffffff;
+  background: var(--bg-surface, #ffffff);
   transition: all 0.2s ease;
+  user-select: none;
 }
 
 .mode-option-card input[type="radio"] {
-  margin-top: 3px;
-  accent-color: var(--primary, #e11d48);
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-strong, #cbd5e1);
+  border-radius: 50%;
+  outline: none;
+  cursor: pointer;
+  margin-top: 2px;
+  flex-shrink: 0;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  background-color: transparent;
+}
+
+.mode-option-card input[type="radio"]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+  box-shadow: inset 0 0 0 3px #ffffff;
 }
 
 .mode-option-card.active {
@@ -8742,7 +9228,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: 8px;
   padding: 8px 18px;
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   transition: all 0.15s ease;
@@ -8775,7 +9261,7 @@ ruby.ruby-item.furigana-hidden rt {
   border-radius: 8px;
   padding: 8px 14px;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   transition: all 0.2s ease;
 }
@@ -8979,7 +9465,7 @@ ruby.ruby-item.furigana-hidden rt {
 
   /* --- 底部输入区精炼降高，为上方对话让出 30~40px 纵向可视高度 --- */
   .chat-input-container {
-    padding: 5px 6px;
+    padding: 5px 6px max(env(safe-area-inset-bottom, 0px), 8px) 6px;
     gap: 4px;
   }
 
@@ -9619,7 +10105,10 @@ ruby.ruby-item.furigana-hidden rt {
   }
 
   .history-drawer-header {
-    padding: 10px 12px;
+    padding-top: max(calc(env(safe-area-inset-top, 0px) + 16px), 44px);
+    padding-bottom: 12px;
+    padding-left: 14px;
+    padding-right: 14px;
     background: var(--bg-surface-elevated, #fafafa);
   }
 
@@ -9686,7 +10175,7 @@ ruby.ruby-item.furigana-hidden rt {
 
   /* 历史记录列表容器与卡片高密度紧凑化 */
   .history-sessions-scroll {
-    padding: 8px 10px 14px 10px;
+    padding: 8px 10px max(calc(env(safe-area-inset-bottom, 0px) + 16px), 24px) 10px;
   }
 
   .history-session-list {
@@ -9965,7 +10454,1267 @@ ruby.ruby-item.furigana-hidden rt {
   }
 }
 
+/* ==========================================================================
+   Comprehensive Dark Mode Component Rules (深色模式全局组件深度适配)
+   ========================================================================== */
 
+.dark-mode .bubble-assistant,
+[data-theme-mode="dark"] .bubble-assistant {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
 
+.dark-mode .input-box-wrapper,
+[data-theme-mode="dark"] .input-box-wrapper {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
 
+.dark-mode .input-box-wrapper:focus-within,
+[data-theme-mode="dark"] .input-box-wrapper:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.dark-mode .chat-textarea,
+[data-theme-mode="dark"] .chat-textarea {
+  color: var(--text-primary);
+}
+
+.dark-mode .phrase-chip-btn,
+[data-theme-mode="dark"] .phrase-chip-btn {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+
+.dark-mode .phrase-chip-btn:hover,
+[data-theme-mode="dark"] .phrase-chip-btn:hover {
+  background: color-mix(in srgb, var(--primary) 15%, var(--bg-surface));
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.dark-mode .level-badge-pill,
+[data-theme-mode="dark"] .level-badge-pill {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .streak-badge-pill,
+[data-theme-mode="dark"] .streak-badge-pill {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .quick-toggle-btn,
+[data-theme-mode="dark"] .quick-toggle-btn {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .quick-toggle-btn:hover,
+[data-theme-mode="dark"] .quick-toggle-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.dark-mode .scenario-top-banner,
+[data-theme-mode="dark"] .scenario-top-banner {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .scenario-select,
+[data-theme-mode="dark"] .scenario-select {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .modal-content,
+[data-theme-mode="dark"] .modal-content {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+
+.dark-mode .modal-header,
+[data-theme-mode="dark"] .modal-header {
+  background: var(--bg-surface);
+  border-bottom-color: var(--border-subtle);
+}
+
+.dark-mode .modal-body,
+[data-theme-mode="dark"] .modal-body {
+  background: var(--bg-main);
+}
+
+.dark-mode .modal-footer,
+[data-theme-mode="dark"] .modal-footer {
+  background: var(--bg-surface);
+  border-top-color: var(--border-subtle);
+}
+
+.dark-mode .settings-tab-btn.active,
+[data-theme-mode="dark"] .settings-tab-btn.active {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  border-bottom-color: var(--bg-surface);
+  color: var(--primary-light);
+}
+
+.dark-mode .settings-form-scrollable,
+[data-theme-mode="dark"] .settings-form-scrollable {
+  background: var(--bg-main);
+}
+
+.dark-mode .custom-setting-group,
+[data-theme-mode="dark"] .custom-setting-group {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .theme-card-option,
+[data-theme-mode="dark"] .theme-card-option {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .theme-card-option.active,
+[data-theme-mode="dark"] .theme-card-option.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .font-card-option,
+[data-theme-mode="dark"] .font-card-option {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .font-card-option.active,
+[data-theme-mode="dark"] .font-card-option.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .form-input,
+.dark-mode .form-textarea,
+[data-theme-mode="dark"] .form-input,
+[data-theme-mode="dark"] .form-textarea {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .form-select,
+[data-theme-mode="dark"] .form-select {
+  background-color: var(--bg-surface-subtle);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a3a3a3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .form-select option,
+[data-theme-mode="dark"] .form-select option {
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.dark-mode input[type="range"],
+.dark-mode .form-range,
+[data-theme-mode="dark"] input[type="range"],
+[data-theme-mode="dark"] .form-range {
+  background: var(--border-strong, #383838);
+}
+
+.dark-mode input[type="range"]::-webkit-slider-thumb,
+.dark-mode .form-range::-webkit-slider-thumb,
+[data-theme-mode="dark"] input[type="range"]::-webkit-slider-thumb,
+[data-theme-mode="dark"] .form-range::-webkit-slider-thumb {
+  background: #f5f5f5;
+  border-color: var(--primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode .form-checkbox,
+[data-theme-mode="dark"] .form-checkbox {
+  background: var(--border-strong, #444444);
+}
+
+.dark-mode .form-checkbox:checked,
+[data-theme-mode="dark"] .form-checkbox:checked {
+  background: var(--primary);
+}
+
+.dark-mode .mode-option-card,
+[data-theme-mode="dark"] .mode-option-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .mode-option-card input[type="radio"],
+[data-theme-mode="dark"] .mode-option-card input[type="radio"] {
+  border-color: var(--border-strong, #4a4a4a);
+}
+
+.dark-mode .mode-option-card input[type="radio"]:checked,
+[data-theme-mode="dark"] .mode-option-card input[type="radio"]:checked {
+  box-shadow: inset 0 0 0 3px var(--bg-surface, #1e1e1e);
+}
+
+.dark-mode .mode-option-card.active,
+[data-theme-mode="dark"] .mode-option-card.active {
+  background: color-mix(in srgb, var(--primary) 12%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .plan-card,
+[data-theme-mode="dark"] .plan-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .level-choice-btn,
+[data-theme-mode="dark"] .level-choice-btn {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+
+.dark-mode .level-choice-btn:hover,
+[data-theme-mode="dark"] .level-choice-btn:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--primary);
+}
+
+.dark-mode .kana-tile,
+[data-theme-mode="dark"] .kana-tile {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .kana-tile:hover,
+[data-theme-mode="dark"] .kana-tile:hover {
+  background: color-mix(in srgb, var(--primary) 16%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .kana-detail-sidebar,
+[data-theme-mode="dark"] .kana-detail-sidebar {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .grammar-card,
+.dark-mode .knowledge-card,
+[data-theme-mode="dark"] .grammar-card,
+[data-theme-mode="dark"] .knowledge-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .history-item-card,
+[data-theme-mode="dark"] .history-item-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .preset-header-btn,
+[data-theme-mode="dark"] .preset-header-btn {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+
+.dark-mode .action-helper-btn,
+[data-theme-mode="dark"] .action-helper-btn {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .helper-action-btn,
+[data-theme-mode="dark"] .helper-action-btn {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .bubble-action-btn,
+[data-theme-mode="dark"] .bubble-action-btn {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .bubble-action-btn:hover,
+[data-theme-mode="dark"] .bubble-action-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+/* --- 历史会话抽屉与卡片 (深色模式适配) --- */
+.dark-mode .history-drawer-content,
+[data-theme-mode="dark"] .history-drawer-content {
+  background: var(--bg-surface);
+  box-shadow: 4px 0 30px rgba(0, 0, 0, 0.6);
+}
+
+.dark-mode .history-drawer-header,
+[data-theme-mode="dark"] .history-drawer-header {
+  background: var(--bg-surface-elevated);
+  border-bottom-color: var(--border-subtle);
+}
+
+.dark-mode .history-actions-bar,
+[data-theme-mode="dark"] .history-actions-bar {
+  border-bottom-color: var(--border-subtle);
+}
+
+.dark-mode .history-search-input,
+[data-theme-mode="dark"] .history-search-input {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .history-search-input:focus,
+[data-theme-mode="dark"] .history-search-input:focus {
+  background: var(--bg-surface);
+  border-color: var(--primary);
+}
+
+.dark-mode .history-session-card,
+[data-theme-mode="dark"] .history-session-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .history-session-card:hover,
+[data-theme-mode="dark"] .history-session-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.dark-mode .history-session-card.active-card,
+[data-theme-mode="dark"] .history-session-card.active-card {
+  background: color-mix(in srgb, var(--primary) 14%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .session-card-bottom,
+[data-theme-mode="dark"] .session-card-bottom {
+  border-top-color: var(--border-subtle);
+}
+
+.dark-mode .history-drawer-footer,
+[data-theme-mode="dark"] .history-drawer-footer {
+  background: var(--bg-surface-elevated);
+  border-top-color: var(--border-subtle);
+}
+
+.dark-mode .session-subtitle-bottom-tag,
+[data-theme-mode="dark"] .session-subtitle-bottom-tag {
+  background: color-mix(in srgb, var(--primary) 12%, var(--bg-surface));
+  color: var(--primary-light);
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+/* --- 智能电子词典悬浮窗 (深色模式适配) --- */
+.dark-mode .word-dictionary-popover,
+[data-theme-mode="dark"] .word-dictionary-popover {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.7), 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode .dict-popover-header,
+[data-theme-mode="dark"] .dict-popover-header {
+  background: color-mix(in srgb, var(--primary) 10%, var(--bg-surface));
+  border-bottom-color: var(--border-subtle);
+}
+
+.dark-mode .dict-popover-footer,
+[data-theme-mode="dark"] .dict-popover-footer {
+  background: color-mix(in srgb, var(--bg-surface) 92%, #000000);
+  border-top-color: var(--border-subtle);
+}
+
+.dark-mode .dict-lemma-card,
+[data-theme-mode="dark"] .dict-lemma-card {
+  background: color-mix(in srgb, var(--primary) 10%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--primary) 28%, transparent);
+}
+
+.dark-mode .dict-detail-card,
+.dark-mode .dict-example-item,
+.dark-mode .dict-breakdown-item,
+.dark-mode .favorite-breakdown-item,
+[data-theme-mode="dark"] .dict-detail-card,
+[data-theme-mode="dark"] .dict-example-item,
+[data-theme-mode="dark"] .dict-breakdown-item,
+[data-theme-mode="dark"] .favorite-breakdown-item {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .dict-translation-card,
+[data-theme-mode="dark"] .dict-translation-card {
+  background: color-mix(in srgb, var(--primary) 12%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--primary) 32%, transparent);
+}
+
+.dark-mode .dict-speak-btn,
+.dark-mode .dict-ai-btn,
+.dark-mode .dict-lemma-switch-btn,
+[data-theme-mode="dark"] .dict-speak-btn,
+[data-theme-mode="dark"] .dict-ai-btn,
+[data-theme-mode="dark"] .dict-lemma-switch-btn {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .dict-speak-btn:hover,
+.dark-mode .dict-ai-btn:hover,
+.dark-mode .dict-lemma-switch-btn:hover,
+[data-theme-mode="dark"] .dict-speak-btn:hover,
+[data-theme-mode="dark"] .dict-ai-btn:hover,
+[data-theme-mode="dark"] .dict-lemma-switch-btn:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.dark-mode .dict-save-btn,
+[data-theme-mode="dark"] .dict-save-btn {
+  background: color-mix(in srgb, var(--primary) 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  color: var(--primary-light);
+}
+
+.dark-mode .dict-save-btn.is-saved,
+[data-theme-mode="dark"] .dict-save-btn.is-saved {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #34d399;
+}
+
+/* --- 纠错卡片与解析卡片 (深色模式适配) --- */
+.dark-mode .correction-card,
+[data-theme-mode="dark"] .correction-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .card-detail-block,
+.dark-mode .card-example-tip,
+.dark-mode .card-grammar-structure,
+[data-theme-mode="dark"] .card-detail-block,
+[data-theme-mode="dark"] .card-example-tip,
+[data-theme-mode="dark"] .card-grammar-structure {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .btn-confirm,
+.dark-mode .btn-cancel,
+[data-theme-mode="dark"] .btn-confirm,
+[data-theme-mode="dark"] .btn-cancel {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+/* --- 学情与语法库界面 (深色模式适配) --- */
+.dark-mode .knowledge-stats-row,
+.dark-mode .grammar-filter-bar,
+[data-theme-mode="dark"] .knowledge-stats-row,
+[data-theme-mode="dark"] .grammar-filter-bar {
+  background: var(--bg-surface-elevated);
+  border-bottom-color: var(--border-subtle);
+}
+
+.dark-mode .knowledge-stat-card,
+.dark-mode .grammar-item-card,
+.dark-mode .knowledge-grammar-card,
+.dark-mode .flashcard-item,
+[data-theme-mode="dark"] .knowledge-stat-card,
+[data-theme-mode="dark"] .grammar-item-card,
+[data-theme-mode="dark"] .knowledge-grammar-card,
+[data-theme-mode="dark"] .flashcard-item {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.dark-mode .grammar-item-card:hover,
+.dark-mode .knowledge-card:hover,
+[data-theme-mode="dark"] .grammar-item-card:hover,
+[data-theme-mode="dark"] .knowledge-card:hover {
+  background: var(--bg-surface);
+  border-color: var(--primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+.dark-mode .knowledge-search-input,
+.dark-mode .grammar-search-input-wrapper input,
+[data-theme-mode="dark"] .knowledge-search-input,
+[data-theme-mode="dark"] .grammar-search-input-wrapper input {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .lvl-filter-pill,
+[data-theme-mode="dark"] .lvl-filter-pill {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .lvl-filter-pill.active,
+[data-theme-mode="dark"] .lvl-filter-pill.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.dark-mode .kana-tab-btn,
+[data-theme-mode="dark"] .kana-tab-btn {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .kana-tab-btn.active,
+[data-theme-mode="dark"] .kana-tab-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+/* --- 设置选项与杂项卡片 (深色模式适配) --- */
+.dark-mode .persona-preset-chip-card,
+.dark-mode .save-preset-card-box,
+.dark-mode .ruby-settings-card,
+.dark-mode .backup-inspection-card,
+.dark-mode .danger-zone-group,
+.dark-mode .memory-mode-card,
+.dark-mode .task-item-row,
+[data-theme-mode="dark"] .persona-preset-chip-card,
+[data-theme-mode="dark"] .save-preset-card-box,
+[data-theme-mode="dark"] .ruby-settings-card,
+[data-theme-mode="dark"] .backup-inspection-card,
+[data-theme-mode="dark"] .danger-zone-group,
+[data-theme-mode="dark"] .memory-mode-card,
+[data-theme-mode="dark"] .task-item-row {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .btn-test-sound,
+.dark-mode .btn-upload-avatar,
+.dark-mode .btn-reset-avatar,
+.dark-mode .btn-danger-reset,
+[data-theme-mode="dark"] .btn-test-sound,
+[data-theme-mode="dark"] .btn-upload-avatar,
+[data-theme-mode="dark"] .btn-reset-avatar,
+[data-theme-mode="dark"] .btn-danger-reset {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .btn-test-sound:hover,
+.dark-mode .btn-upload-avatar:hover,
+.dark-mode .btn-reset-avatar:hover,
+[data-theme-mode="dark"] .btn-test-sound:hover,
+[data-theme-mode="dark"] .btn-upload-avatar:hover,
+[data-theme-mode="dark"] .btn-reset-avatar:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.dark-mode .color-hex-input,
+.dark-mode .add-weak-input,
+.dark-mode .rename-input,
+[data-theme-mode="dark"] .color-hex-input,
+[data-theme-mode="dark"] .add-weak-input,
+[data-theme-mode="dark"] .rename-input {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .memory-mode-cost,
+[data-theme-mode="dark"] .memory-mode-cost {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--primary-light);
+}
+
+.dark-mode .demo-notice-banner,
+[data-theme-mode="dark"] .demo-notice-banner {
+  background: color-mix(in srgb, #0ea5e9 12%, var(--bg-surface));
+  border-color: color-mix(in srgb, #0ea5e9 25%, transparent);
+  color: #38bdf8;
+}
+
+.dark-mode .session-mode-tag.badge-tutor,
+[data-theme-mode="dark"] .session-mode-tag.badge-tutor {
+  background: rgba(219, 39, 119, 0.15);
+  color: #f472b6;
+  border-color: rgba(219, 39, 119, 0.3);
+}
+
+.dark-mode .session-mode-tag.badge-roleplay,
+[data-theme-mode="dark"] .session-mode-tag.badge-roleplay {
+  background: rgba(79, 70, 229, 0.15);
+  color: #a5b4fc;
+  border-color: rgba(79, 70, 229, 0.3);
+}
+
+.dark-mode .session-mode-tag.badge-correction,
+[data-theme-mode="dark"] .session-mode-tag.badge-correction {
+  background: rgba(22, 163, 74, 0.15);
+  color: #4ade80;
+  border-color: rgba(22, 163, 74, 0.3);
+}
+
+.dark-mode .session-mode-tag.badge-assessment,
+[data-theme-mode="dark"] .session-mode-tag.badge-assessment {
+  background: rgba(217, 119, 6, 0.15);
+  color: #fbbf24;
+  border-color: rgba(217, 119, 6, 0.3);
+}
+
+.dark-mode .session-mode-tag.badge-kana,
+[data-theme-mode="dark"] .session-mode-tag.badge-kana {
+  background: rgba(124, 58, 237, 0.15);
+  color: #c084fc;
+  border-color: rgba(124, 58, 237, 0.3);
+}
+
+.dark-mode .knowledge-mastery-badge.learning,
+[data-theme-mode="dark"] .knowledge-mastery-badge.learning {
+  background: rgba(37, 99, 235, 0.15);
+  color: #60a5fa;
+  border-color: rgba(37, 99, 235, 0.3);
+}
+
+.dark-mode .knowledge-mastery-badge.reviewing,
+[data-theme-mode="dark"] .knowledge-mastery-badge.reviewing {
+  background: rgba(192, 38, 211, 0.15);
+  color: #e879f9;
+  border-color: rgba(192, 38, 211, 0.3);
+}
+
+.dark-mode .knowledge-mastery-badge.mastered,
+[data-theme-mode="dark"] .knowledge-mastery-badge.mastered {
+  background: rgba(22, 163, 74, 0.15);
+  color: #4ade80;
+  border-color: rgba(22, 163, 74, 0.3);
+}
+
+.dark-mode .pitch-accent-badge,
+[data-theme-mode="dark"] .pitch-accent-badge {
+  background: rgba(2, 132, 199, 0.15);
+  color: #38bdf8;
+  border-color: rgba(2, 132, 199, 0.3);
+}
+
+.dark-mode .card-level-tag,
+.dark-mode .word-level-tag,
+[data-theme-mode="dark"] .card-level-tag,
+[data-theme-mode="dark"] .word-level-tag {
+  background: rgba(217, 119, 6, 0.15);
+  color: #fbbf24;
+  border-color: rgba(217, 119, 6, 0.3);
+}
+
+.dark-mode .card-pos-tag,
+.dark-mode .word-pos-tag,
+[data-theme-mode="dark"] .card-pos-tag,
+[data-theme-mode="dark"] .word-pos-tag {
+  background: rgba(79, 70, 229, 0.15);
+  color: #a5b4fc;
+  border-color: rgba(79, 70, 229, 0.3);
+}
+
+.dark-mode .cropper-modal-content,
+[data-theme-mode="dark"] .cropper-modal-content {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-body);
+}
+
+/* --- 深色模式全面补充：人设预设、导入导出、学情卡片与设置面板 --- */
+.dark-mode .settings-tabs-nav,
+[data-theme-mode="dark"] .settings-tabs-nav {
+  background: var(--bg-surface);
+  border-bottom-color: var(--border-subtle);
+}
+
+.dark-mode .settings-tab-btn,
+[data-theme-mode="dark"] .settings-tab-btn {
+  color: var(--text-secondary);
+}
+
+.dark-mode .settings-tab-btn:hover,
+[data-theme-mode="dark"] .settings-tab-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.dark-mode .settings-tab-btn.active,
+[data-theme-mode="dark"] .settings-tab-btn.active {
+  background: var(--bg-main);
+  border-color: var(--border-subtle);
+  border-bottom-color: var(--bg-main);
+  color: var(--primary-light);
+}
+
+.dark-mode .preset-selector-panel,
+[data-theme-mode="dark"] .preset-selector-panel {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .preset-header-btn.btn-save-preset,
+[data-theme-mode="dark"] .preset-header-btn.btn-save-preset {
+  background: color-mix(in srgb, var(--primary) 15%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  color: var(--primary-light);
+}
+
+.dark-mode .preset-toast-banner,
+[data-theme-mode="dark"] .preset-toast-banner {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+.dark-mode .save-preset-card-box,
+[data-theme-mode="dark"] .save-preset-card-box {
+  background: var(--bg-surface);
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border-subtle));
+}
+
+.dark-mode .save-preset-title,
+[data-theme-mode="dark"] .save-preset-title {
+  color: var(--primary-light);
+}
+
+.dark-mode .btn-save-cancel,
+[data-theme-mode="dark"] .btn-save-cancel {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .btn-save-cancel:hover,
+[data-theme-mode="dark"] .btn-save-cancel:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.dark-mode .fallback-info-alert,
+[data-theme-mode="dark"] .fallback-info-alert {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.25);
+  color: #fbbf24;
+}
+
+.dark-mode .avatar-config-card,
+[data-theme-mode="dark"] .avatar-config-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .avatar-preview-circle,
+[data-theme-mode="dark"] .avatar-preview-circle {
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .theme-mode-card,
+[data-theme-mode="dark"] .theme-mode-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .theme-mode-card:hover,
+[data-theme-mode="dark"] .theme-mode-card:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+}
+
+.dark-mode .theme-mode-card.active,
+[data-theme-mode="dark"] .theme-mode-card.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.dark-mode .theme-card-option,
+[data-theme-mode="dark"] .theme-card-option {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .theme-card-option:hover,
+[data-theme-mode="dark"] .theme-card-option:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+}
+
+.dark-mode .theme-card-option.active,
+[data-theme-mode="dark"] .theme-card-option.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.dark-mode .font-card-option,
+[data-theme-mode="dark"] .font-card-option {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .font-card-option:hover,
+[data-theme-mode="dark"] .font-card-option:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+}
+
+.dark-mode .font-card-option.active,
+[data-theme-mode="dark"] .font-card-option.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .custom-font-preview-card,
+[data-theme-mode="dark"] .custom-font-preview-card {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .density-pill-btn,
+[data-theme-mode="dark"] .density-pill-btn {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .density-pill-btn:hover,
+[data-theme-mode="dark"] .density-pill-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.dark-mode .density-pill-btn.active,
+[data-theme-mode="dark"] .density-pill-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.dark-mode .memory-mode-card,
+[data-theme-mode="dark"] .memory-mode-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .memory-mode-card:hover,
+[data-theme-mode="dark"] .memory-mode-card:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+}
+
+.dark-mode .memory-mode-card.active,
+[data-theme-mode="dark"] .memory-mode-card.active {
+  background: color-mix(in srgb, var(--primary) 14%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .ruby-color-pill,
+[data-theme-mode="dark"] .ruby-color-pill {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-body);
+}
+
+.dark-mode .ruby-color-pill:hover,
+[data-theme-mode="dark"] .ruby-color-pill:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+}
+
+.dark-mode .ruby-color-pill.active,
+[data-theme-mode="dark"] .ruby-color-pill.active {
+  background: color-mix(in srgb, var(--primary) 18%, var(--bg-surface));
+  border-color: var(--primary);
+  color: var(--primary-light);
+}
+
+.dark-mode .ruby-preview-container,
+[data-theme-mode="dark"] .ruby-preview-container {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .preview-chat-bubble,
+[data-theme-mode="dark"] .preview-chat-bubble {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .subtitle-preview-container,
+[data-theme-mode="dark"] .subtitle-preview-container {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .sync-toast-alert,
+[data-theme-mode="dark"] .sync-toast-alert {
+  background: rgba(16, 185, 129, 0.16);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #34d399;
+}
+
+.dark-mode .backup-stat-chip,
+[data-theme-mode="dark"] .backup-stat-chip {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .btn-backup-export,
+[data-theme-mode="dark"] .btn-backup-export {
+  background: var(--bg-surface-elevated);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .btn-backup-export:hover,
+[data-theme-mode="dark"] .btn-backup-export:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.dark-mode .backup-dropzone,
+[data-theme-mode="dark"] .backup-dropzone {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .backup-dropzone:hover,
+[data-theme-mode="dark"] .backup-dropzone:hover {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 10%, var(--bg-surface));
+}
+
+.dark-mode .backup-inspection-card,
+[data-theme-mode="dark"] .backup-inspection-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .inspection-grid,
+[data-theme-mode="dark"] .inspection-grid {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .inspection-item .item-v,
+[data-theme-mode="dark"] .inspection-item .item-v {
+  color: var(--text-primary);
+}
+
+.dark-mode .mode-option-card,
+[data-theme-mode="dark"] .mode-option-card {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .mode-option-card:hover,
+[data-theme-mode="dark"] .mode-option-card:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-strong);
+}
+
+.dark-mode .mode-option-card.active,
+[data-theme-mode="dark"] .mode-option-card.active {
+  background: color-mix(in srgb, var(--primary) 14%, var(--bg-surface));
+  border-color: var(--primary);
+}
+
+.dark-mode .danger-zone-group,
+[data-theme-mode="dark"] .danger-zone-group {
+  background: color-mix(in srgb, #dc2626 8%, var(--bg-surface));
+  border-color: rgba(220, 38, 38, 0.3);
+}
+
+.dark-mode .danger-zone-desc,
+[data-theme-mode="dark"] .danger-zone-desc {
+  color: var(--text-secondary);
+}
+
+/* 学情档案 (KnowledgeModal) 细节适配 */
+.dark-mode .knowledge-modal,
+[data-theme-mode="dark"] .knowledge-modal {
+  background: var(--bg-surface);
+}
+
+.dark-mode .knowledge-title-icon,
+[data-theme-mode="dark"] .knowledge-title-icon {
+  background: color-mix(in srgb, var(--primary) 15%, var(--bg-surface));
+}
+
+.dark-mode .knowledge-memory-tag,
+[data-theme-mode="dark"] .knowledge-memory-tag {
+  background: rgba(99, 102, 241, 0.15);
+  border-color: rgba(99, 102, 241, 0.3);
+  color: #a5b4fc;
+}
+
+.dark-mode .mini-progress-track,
+[data-theme-mode="dark"] .mini-progress-track {
+  background: var(--bg-surface-subtle);
+}
+
+.dark-mode .knowledge-toolbar,
+[data-theme-mode="dark"] .knowledge-toolbar {
+  border-bottom-color: var(--border-subtle);
+}
+
+.dark-mode .knowledge-tab-btn:hover,
+[data-theme-mode="dark"] .knowledge-tab-btn:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.dark-mode .knowledge-tab-btn.active,
+[data-theme-mode="dark"] .knowledge-tab-btn.active {
+  background: color-mix(in srgb, var(--primary) 16%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  color: var(--primary-light);
+}
+
+.dark-mode .knowledge-filter-pills,
+[data-theme-mode="dark"] .knowledge-filter-pills {
+  background: var(--bg-surface-subtle);
+}
+
+.dark-mode .knowledge-filter-pill:hover,
+[data-theme-mode="dark"] .knowledge-filter-pill:hover {
+  color: var(--text-primary);
+}
+
+.dark-mode .knowledge-filter-pill.active,
+[data-theme-mode="dark"] .knowledge-filter-pill.active {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.dark-mode .filter-count-badge,
+[data-theme-mode="dark"] .filter-count-badge {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+}
+
+.dark-mode .flashcard-mode-toggle,
+[data-theme-mode="dark"] .flashcard-mode-toggle {
+  background: var(--bg-surface);
+  border-color: var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+.dark-mode .flashcard-mode-toggle:hover,
+[data-theme-mode="dark"] .flashcard-mode-toggle:hover {
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.dark-mode .flashcard-mode-toggle.active,
+[data-theme-mode="dark"] .flashcard-mode-toggle.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+
+.dark-mode .grammar-explanation-box,
+.dark-mode .grammar-example-box,
+.dark-mode .card-meaning-block,
+.dark-mode .card-example-block,
+[data-theme-mode="dark"] .grammar-explanation-box,
+[data-theme-mode="dark"] .grammar-example-box,
+[data-theme-mode="dark"] .card-meaning-block,
+[data-theme-mode="dark"] .card-example-block {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+}
+
+.dark-mode .btn-forgot,
+[data-theme-mode="dark"] .btn-forgot {
+  background: rgba(220, 38, 38, 0.15);
+  border-color: rgba(220, 38, 38, 0.35);
+  color: #f87171;
+}
+
+.dark-mode .btn-forgot:hover,
+[data-theme-mode="dark"] .btn-forgot:hover {
+  background: rgba(220, 38, 38, 0.25);
+}
+
+.dark-mode .btn-remembered,
+[data-theme-mode="dark"] .btn-remembered {
+  background: rgba(217, 119, 6, 0.15);
+  border-color: rgba(217, 119, 6, 0.35);
+  color: #fbbf24;
+}
+
+.dark-mode .btn-remembered:hover,
+[data-theme-mode="dark"] .btn-remembered:hover {
+  background: rgba(217, 119, 6, 0.25);
+}
+
+.dark-mode .btn-mastered,
+[data-theme-mode="dark"] .btn-mastered {
+  background: rgba(22, 163, 74, 0.15);
+  border-color: rgba(22, 163, 74, 0.35);
+  color: #4ade80;
+}
+
+.dark-mode .btn-mastered:hover,
+[data-theme-mode="dark"] .btn-mastered:hover {
+  background: rgba(22, 163, 74, 0.25);
+}
+
+.dark-mode .card-pitch-tag,
+[data-theme-mode="dark"] .card-pitch-tag {
+  background: rgba(2, 132, 199, 0.15);
+  border-color: rgba(2, 132, 199, 0.3);
+  color: #38bdf8;
+}
+
+.dark-mode .card-grammar-structure,
+[data-theme-mode="dark"] .card-grammar-structure {
+  background: rgba(13, 148, 136, 0.15);
+  border-color: rgba(13, 148, 136, 0.35);
+}
+
+.dark-mode .card-grammar-structure code,
+.dark-mode .card-grammar-structure .structure-content,
+[data-theme-mode="dark"] .card-grammar-structure code,
+[data-theme-mode="dark"] .card-grammar-structure .structure-content {
+  color: #5eead4;
+}
+
+.dark-mode .structure-label,
+[data-theme-mode="dark"] .structure-label {
+  color: #2dd4bf;
+}
+
+.dark-mode .empty-action-btn,
+[data-theme-mode="dark"] .empty-action-btn {
+  background: var(--bg-surface-subtle);
+  border-color: var(--border-subtle);
+  color: var(--text-primary);
+}
+
+.dark-mode .session-rename-form-dual,
+[data-theme-mode="dark"] .session-rename-form-dual {
+  background: var(--bg-surface);
+  border-color: var(--primary);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* 深色模式滚动条适配 */
+.dark-mode ::-webkit-scrollbar,
+[data-theme-mode="dark"] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.dark-mode ::-webkit-scrollbar-track,
+[data-theme-mode="dark"] ::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.dark-mode ::-webkit-scrollbar-thumb,
+[data-theme-mode="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+}
+
+.dark-mode ::-webkit-scrollbar-thumb:hover,
+[data-theme-mode="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* ==================================================================== */
+/* 纯净无粗体 UI 规范保障：除了 Markdown 语法强调外，全局 UI 禁用粗体 */
+/* ==================================================================== */
+h1, h2, h3, h4, h5, h6,
+button, input, select, textarea,
+b:not(.md-bold-text):not(.md-bold-text *),
+strong:not(.md-bold-text):not(.md-bold-text *),
+th {
+  font-weight: normal;
+}
+
+/* 再次保证 Markdown 语法特别强调不受任何父级或外部规则影响 */
+.md-bold-text,
+strong.md-bold-text,
+.md-bold-text .ruby-base {
+  font-weight: 700 !important;
+}
+
+.md-bold-text rt,
+.md-bold-text rt.ruby-annotation,
+.md-bold-text .mora-char,
+.md-bold-text .plain-reading,
+.md-bold-text .pitch-mini-badge,
+.md-bold-text .textbook-mora-track {
+  font-weight: 400 !important;
+}
+
+/* Android 手机返回退出轻量 Toast 提示 */
+.shiori-back-exit-toast {
+  position: fixed;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  background: rgba(15, 23, 42, 0.88);
+  color: #ffffff;
+  padding: 8px 18px;
+  border-radius: 9999px;
+  font-size: 0.88rem;
+  font-weight: normal;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.22s ease, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 99999;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.shiori-back-exit-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
 

@@ -1,9 +1,57 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { BookOpen, Check } from 'lucide-react';
+import { BookOpen, Check, Copy } from 'lucide-react';
 import { WordDictionaryPopover } from '../components/Chat/WordDictionaryPopover';
 import { LearnedWord, FavoriteExpression } from '../types';
 import { dictionaryService } from '../services/dictionaryService';
+import { useBackButton } from '../utils/backButtonManager';
+
+/**
+ * 获取屏幕坐标 (x, y) 处对应的 DOM 文本节点与光标字符偏移量
+ * 兼容 Chromium/Android WebView 与 WebKit/iOS Safari
+ */
+function getCaretFromPoint(x: number, y: number): { node: Node; offset: number } | null {
+  if (typeof document.caretRangeFromPoint === 'function') {
+    const range = document.caretRangeFromPoint(x, y);
+    if (range) return { node: range.startContainer, offset: range.startOffset };
+  }
+  if (typeof (document as any).caretPositionFromPoint === 'function') {
+    const pos = (document as any).caretPositionFromPoint(x, y);
+    if (pos && pos.offsetNode) return { node: pos.offsetNode, offset: pos.offset };
+  }
+  return null;
+}
+
+/**
+ * 根据起始光标与当前光标构建精准的文本选区 Range
+ */
+function createRangeBetweenCarets(
+  caretA: { node: Node; offset: number },
+  caretB: { node: Node; offset: number }
+): Range | null {
+  try {
+    const range = document.createRange();
+    if (caretA.node === caretB.node) {
+      const start = Math.min(caretA.offset, caretB.offset);
+      const end = Math.max(caretA.offset, caretB.offset);
+      range.setStart(caretA.node, start);
+      range.setEnd(caretA.node, end);
+      return range;
+    }
+
+    const pos = caretA.node.compareDocumentPosition(caretB.node);
+    if (pos & Node.DOCUMENT_POSITION_FOLLOWING) {
+      range.setStart(caretA.node, caretA.offset);
+      range.setEnd(caretB.node, caretB.offset);
+    } else {
+      range.setStart(caretB.node, caretB.offset);
+      range.setEnd(caretA.node, caretA.offset);
+    }
+    return range;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 划词查询允许的最大字符数。
@@ -787,6 +835,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
 }) => {
   const [activeParams, setActiveParams] = useState<OpenDictionaryParams | null>(null);
   const [selectionAction, setSelectionAction] = useState<SelectionAction | null>(null);
+  const [copied, setCopied] = useState(false);
   const [pendingLookups, setPendingLookups] = useState<PendingLookup[]>([]);
   const [queriedTerms, setQueriedTerms] = useState<Set<string>>(() =>
     dictionaryService.getQueriedTerms()
@@ -829,6 +878,22 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
   const closeDictionary = useCallback(() => {
     setActiveParams(null);
   }, []);
+
+  // 手机返回操作：若划词复制/查词悬浮胶囊正在展示，返回时先关闭胶囊 (优先级 110)
+  useBackButton(
+    'selection-action-capsule',
+    !!selectionAction,
+    () => {
+      setSelectionAction(null);
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch {}
+    },
+    110
+  );
+
+  // 手机返回操作：若查词悬浮窗打开，返回时关闭查词悬浮窗 (优先级 100)
+  useBackButton('dictionary-popover', !!activeParams, closeDictionary, 100);
 
   /**
    * 登记一次 AI 查询，返回追踪 id。
@@ -997,87 +1062,61 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
     [learnedWords]
   );
 
-  // 全局划词选区监听：支持普通 DOM 选区及 <input>/<textarea> 内的文本划选
+  // 移动端触摸滑动划词信息引用
+  const touchInfoRef = useRef<{
+    startX: number;
+    startY: number;
+    startTime: number;
+    startCaret: { node: Node; offset: number } | null;
+    currentX: number;
+    currentY: number;
+    isActive: boolean;
+    timer: any;
+    targetEl: HTMLElement | null;
+  } | null>(null);
+
+  // 全局划词选区处理与事件驱动：支持桌面鼠标划选、手机端手势滑动划选及输入框内划选
   useEffect(() => {
-    const handleMouseDown = (e: MouseEvent) => {
-      mouseDownInfoRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
-
-      // 如果点击在划词悬浮按钮自身上，不予销毁
-      if ((e.target as Element)?.closest?.('.selection-lookup-tooltip')) {
-        return;
-      }
-
-      // 核心修复：点击外部任意组件时，立即标记并销毁现存的划词按钮
-      if (selectionActionRef.current) {
-        setSelectionAction(null);
-        justDismissedRef.current = true;
-      }
-    };
-
-    const handleMouseUp = (e: MouseEvent) => {
-      // 若点击发生在划词按钮自身内部，不重新计算以防干扰按钮点击事件
-      if ((e.target as Element)?.closest?.('.selection-lookup-tooltip')) {
-        return;
-      }
-
-      const downInfo = mouseDownInfoRef.current;
-      const dist = downInfo ? Math.hypot(e.clientX - downInfo.x, e.clientY - downInfo.y) : 0;
-      const isSingleClick = e.detail <= 1 && dist < 5;
-
-      // 核心修复：单次点击任何外部组件或空白处（无划选拖拽动作，且非双击选词）
-      // 绝不允许重新唤起划词按钮，并顺畅消除残留选区
-      if (isSingleClick) {
-        if (justDismissedRef.current) {
-          justDismissedRef.current = false;
-          try {
-            window.getSelection()?.removeAllRanges();
-          } catch {
-            // ignore
-          }
-        }
-        setSelectionAction(null);
-        return;
-      }
-      justDismissedRef.current = false;
-
-      const target = e.target as HTMLElement | null;
-
+    const processCurrentSelection = (
+      cursorX?: number,
+      cursorY?: number,
+      targetEl?: HTMLElement | null
+    ): boolean => {
       // 场景 1：在 <input> 或 <textarea> 输入框内部划词
       if (
-        target &&
-        (target instanceof HTMLTextAreaElement || target instanceof HTMLInputElement)
+        targetEl &&
+        (targetEl instanceof HTMLTextAreaElement || targetEl instanceof HTMLInputElement)
       ) {
-        if (target.type === 'password' || target.disabled) {
+        if (targetEl.type === 'password' || targetEl.disabled) {
           setSelectionAction(null);
-          return;
+          return false;
         }
 
-        const start = target.selectionStart;
-        const end = target.selectionEnd;
+        const start = targetEl.selectionStart;
+        const end = targetEl.selectionEnd;
         if (start !== null && end !== null && end > start) {
-          const rawText = target.value.slice(start, end).trim();
+          const rawText = targetEl.value.slice(start, end).trim();
           if (
             rawText.length >= 1 &&
             rawText.length <= MAX_SELECTION_LOOKUP_LENGTH &&
             /[\u4e00-\u9fa5一-龯々〆ぁ-んァ-ヶa-zA-Z0-9]/.test(rawText)
           ) {
-            // 输入框光标释放点即为用户划选终点
-            const cursorX = e.clientX;
-            const cursorY = e.clientY;
-            const anchorRect = new DOMRect(cursorX - 10, cursorY - 12, 20, 20);
-            const sentenceContext = target.value;
+            const cx = cursorX ?? targetEl.getBoundingClientRect().right;
+            const cy = cursorY ?? targetEl.getBoundingClientRect().top;
+            const anchorRect = new DOMRect(cx - 10, cy - 12, 20, 20);
+            const sentenceContext = targetEl.value;
 
             setSelectionAction({
               text: rawText,
-              cursorX,
-              cursorY,
+              cursorX: cx,
+              cursorY: cy,
               anchorRect,
-              anchorEl: target,
+              anchorEl: targetEl,
               isFromJTag: false,
               sentenceContext,
               isInput: true,
             });
-            return;
+            return true;
           }
         }
       }
@@ -1085,8 +1124,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
       // 场景 2：在普通 DOM 文本（气泡、卡片、注音等）中划词
       const sel = window.getSelection();
       if (!sel || sel.isCollapsed) {
-        setSelectionAction(null);
-        return;
+        return false;
       }
 
       const originalText = sel.toString();
@@ -1094,32 +1132,24 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
         !originalText ||
         !/[\u4e00-\u9fa5一-龯々〆ぁ-んァ-ヶa-zA-Z0-9]/.test(originalText)
       ) {
-        setSelectionAction(null);
-        return;
+        return false;
       }
 
       try {
         const rawRange = sel.getRangeAt(0);
-        // 先将 Range 规范化映射到真实的 TEXT_NODE 节点上，
-        // 彻底杜绝 Chromium 在跨节点选区时将 Range.startContainer 置为父级元素（如 bubble-line），
-        // 从而引发 getClientRects() 坍塌到行首左侧的严重定位 Bug
         const normalizedRange = normalizeRangeToTextNodes(rawRange);
-        // 精确裁剪选区边缘的空格、标点及括号，确保选区矩形紧密贴合词汇本体，消除横向偏移
         const { trimmedRange, cleanText } = trimRangeToCleanText(normalizedRange, originalText);
         if (
           cleanText.length < 1 ||
           cleanText.length > MAX_SELECTION_LOOKUP_LENGTH ||
           !/[\u4e00-\u9fa5一-龯々〆ぁ-んァ-ヶa-zA-Z0-9]/.test(cleanText)
         ) {
-          setSelectionAction(null);
-          return;
+          return false;
         }
 
         const bounding = getPreciseRangeRect(trimmedRange) || trimmedRange.getBoundingClientRect();
         if (bounding.width > 0 && bounding.height > 0) {
-          // 克隆选区：后续 removeAllRanges 不影响它，浮窗关闭后仍可用它精确定位被查询的文本
           const liveRange = trimmedRange.cloneRange();
-          // 判断划词方向：正选（左->右，上->下）或 反选（右->左，下->上）
           let isBackward = false;
           if (sel.anchorNode && sel.focusNode) {
             if (sel.anchorNode === sel.focusNode) {
@@ -1130,7 +1160,6 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
             }
           }
 
-          // 获取终点光标（Caret）精确坐标
           let caretX: number | null = null;
           let caretY: number | null = null;
 
@@ -1144,12 +1173,9 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
                 caretX = isBackward ? rects[0].left : rects[0].right;
                 caretY = rects[0].top;
               }
-            } catch {
-              // ignore
-            }
+            } catch {}
           }
 
-          // 若微小范围未命中，尝试将 Range 折叠至端点获取矩形
           if (caretX === null || caretY === null) {
             try {
               const cloned = trimmedRange.cloneRange();
@@ -1160,15 +1186,12 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
                 caretX = isBackward ? targetRect.left : targetRect.right;
                 caretY = targetRect.top;
               }
-            } catch {
-              // ignore
-            }
+            } catch {}
           }
 
-          // 若浏览器仍未提供，回退为选区边缘结合鼠标释放位置
           if (caretX === null || caretY === null) {
-            caretX = isBackward ? bounding.left : bounding.right;
-            caretY = isBackward ? bounding.top : bounding.bottom - 20;
+            caretX = cursorX ?? (isBackward ? bounding.left : bounding.right);
+            caretY = cursorY ?? (isBackward ? bounding.top : bounding.bottom - 20);
           }
 
           const parentEl = sel.anchorNode?.parentElement;
@@ -1228,24 +1251,233 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
             sentenceContext,
             selectionRange: liveRange,
           });
-          return;
+          return true;
         }
       } catch {
-        setSelectionAction(null);
+        return false;
+      }
+      return false;
+    };
+
+    // 桌面端鼠标划选
+    const handleMouseDown = (e: MouseEvent) => {
+      mouseDownInfoRef.current = { x: e.clientX, y: e.clientY, time: Date.now() };
+
+      if ((e.target as Element)?.closest?.('.selection-lookup-tooltip')) {
+        return;
       }
 
-      setSelectionAction(null);
+      if (selectionActionRef.current) {
+        setSelectionAction(null);
+        justDismissedRef.current = true;
+      }
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if ((e.target as Element)?.closest?.('.selection-lookup-tooltip')) {
+        return;
+      }
+
+      const downInfo = mouseDownInfoRef.current;
+      const dist = downInfo ? Math.hypot(e.clientX - downInfo.x, e.clientY - downInfo.y) : 0;
+      const isSingleClick = e.detail <= 1 && dist < 5;
+
+      if (isSingleClick) {
+        if (justDismissedRef.current) {
+          justDismissedRef.current = false;
+          try {
+            window.getSelection()?.removeAllRanges();
+          } catch {}
+        }
+        setSelectionAction(null);
+        return;
+      }
+      justDismissedRef.current = false;
+
+      const target = e.target as HTMLElement | null;
+      processCurrentSelection(e.clientX, e.clientY, target);
+    };
+
+    // 移动端手势滑动划选引擎 (Touch Slide Selection)
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      const target = e.target as HTMLElement | null;
+
+      if (target?.closest('.selection-lookup-tooltip')) {
+        return;
+      }
+
+      // 点击外部消除已有浮动胶囊
+      if (selectionActionRef.current) {
+        setSelectionAction(null);
+        justDismissedRef.current = true;
+      }
+
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      // 仅在对话气泡、卡片等文本学习区域激活滑动划词
+      const isSelectableArea =
+        !!target?.closest('.message-bubble') ||
+        !!target?.closest('.bubble-content-text') ||
+        !!target?.closest('.dialogue-bubble') ||
+        !!target?.closest('.ruby-text-container') ||
+        !!target?.closest('.scenario-top-banner') ||
+        !!target?.closest('.knowledge-card') ||
+        !!target?.closest('.grammar-card');
+
+      if (!isSelectableArea) return;
+
+      const caret = getCaretFromPoint(touch.clientX, touch.clientY);
+      const touchInfo = {
+        startX: touch.clientX,
+        startY: touch.clientY,
+        startTime: Date.now(),
+        startCaret: caret,
+        currentX: touch.clientX,
+        currentY: touch.clientY,
+        isActive: false,
+        timer: null as any,
+        targetEl: target,
+      };
+
+      // 220ms 触控长按进入选词准备，给予微触感反馈
+      touchInfo.timer = setTimeout(() => {
+        if (!touchInfoRef.current) return;
+        touchInfoRef.current.isActive = true;
+        try {
+          if (navigator.vibrate) navigator.vibrate(12);
+        } catch {}
+      }, 220);
+
+      touchInfoRef.current = touchInfo;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const ti = touchInfoRef.current;
+      if (!ti || e.touches.length !== 1) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - ti.startX;
+      const dy = touch.clientY - ti.startY;
+
+      // 手势意图识别：如果垂直滑动显著大于横向滑动，说明用户在上下滚动列表浏览对话
+      if (!ti.isActive) {
+        if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
+          // 垂直滚动：立即取消滑动划选，放行原生丝滑滚动
+          if (ti.timer) clearTimeout(ti.timer);
+          touchInfoRef.current = null;
+          return;
+        }
+
+        // 横向滑移超过 10px 且水平位移占优：立即激活滑动划词模式
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          if (ti.timer) clearTimeout(ti.timer);
+          ti.isActive = true;
+          try {
+            if (navigator.vibrate) navigator.vibrate(10);
+          } catch {}
+        }
+      }
+
+      // 已激活滑动划词模式：阻止页面垂直抖动与滚动，实时随着手指移动更新文本选区
+      if (ti.isActive) {
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+        ti.currentX = touch.clientX;
+        ti.currentY = touch.clientY;
+
+        if (ti.startCaret) {
+          const currentCaret = getCaretFromPoint(touch.clientX, touch.clientY);
+          if (currentCaret) {
+            const range = createRangeBetweenCarets(ti.startCaret, currentCaret);
+            if (range) {
+              const sel = window.getSelection();
+              if (sel) {
+                sel.removeAllRanges();
+                sel.addRange(range);
+              }
+            }
+          }
+        }
+      }
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      const ti = touchInfoRef.current;
+      if (!ti) return;
+      if (ti.timer) clearTimeout(ti.timer);
+
+      if (ti.isActive) {
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+        // 手指抬起：根据最终选区精准呼出查词悬浮胶囊
+        processCurrentSelection(ti.currentX, ti.currentY, ti.targetEl);
+        touchInfoRef.current = null;
+        return;
+      }
+
+      // 普通轻触或双击文本兜底
+      touchInfoRef.current = null;
+      setTimeout(() => {
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) {
+          processCurrentSelection(ti.currentX, ti.currentY, ti.targetEl);
+        }
+      }, 90);
+    };
+
+    // 拦截移动端长按或选词时浏览器弹出的原生上下文菜单（如复制/分享/网页搜索等）
+    const handleContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target?.closest('.message-bubble') ||
+        target?.closest('.bubble-content-text') ||
+        target?.closest('.dialogue-bubble') ||
+        target?.closest('.ruby-text-container') ||
+        (window.getSelection() && !window.getSelection()?.isCollapsed)
+      ) {
+        e.preventDefault();
+      }
+    };
+
+    // 监听 selectionchange 作为全平台选词兜底
+    let selChangeTimeout: any = null;
+    const handleSelectionChange = () => {
+      if (touchInfoRef.current?.isActive) return;
+      clearTimeout(selChangeTimeout);
+      selChangeTimeout = setTimeout(() => {
+        const sel = window.getSelection();
+        if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) {
+          processCurrentSelection();
+        }
+      }, 160);
     };
 
     document.addEventListener('mousedown', handleMouseDown, true);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('touchstart', handleTouchStart, { passive: true });
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd);
+    document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('selectionchange', handleSelectionChange);
+
     return () => {
       document.removeEventListener('mousedown', handleMouseDown, true);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchstart', handleTouchStart);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+      document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('selectionchange', handleSelectionChange);
+      if (selChangeTimeout) clearTimeout(selChangeTimeout);
     };
   }, []);
 
-  // 查词按钮适时销毁机制：页面滚动、点击外部组件、按 Esc 或窗口改变大小时立即消失
+  // 查词胶囊适时销毁机制：页面滚动、点击外部组件、按 Esc 或窗口改变大小时立即消失
   useEffect(() => {
     if (!selectionAction) return;
 
@@ -1253,7 +1485,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
       setSelectionAction(null);
     };
 
-    const handleDismissMouseDown = (e: MouseEvent) => {
+    const handleDismissPointerDown = (e: MouseEvent | TouchEvent) => {
       if ((e.target as Element)?.closest?.('.selection-lookup-tooltip')) {
         return;
       }
@@ -1261,9 +1493,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
       justDismissedRef.current = true;
       try {
         window.getSelection()?.removeAllRanges();
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
 
     const handleDismissKeyDown = (e: KeyboardEvent) => {
@@ -1277,22 +1507,26 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
     };
 
     window.addEventListener('scroll', handleDismissScroll, { capture: true, passive: true });
-    window.addEventListener('mousedown', handleDismissMouseDown, true);
+    window.addEventListener('mousedown', handleDismissPointerDown as any, true);
+    window.addEventListener('touchstart', handleDismissPointerDown as any, { capture: true, passive: true });
     window.addEventListener('keydown', handleDismissKeyDown);
     window.addEventListener('resize', handleDismissResize);
 
     return () => {
       window.removeEventListener('scroll', handleDismissScroll, true);
-      window.removeEventListener('mousedown', handleDismissMouseDown, true);
+      window.removeEventListener('mousedown', handleDismissPointerDown as any, true);
+      window.removeEventListener('touchstart', handleDismissPointerDown as any, true);
       window.removeEventListener('keydown', handleDismissKeyDown);
       window.removeEventListener('resize', handleDismissResize);
     };
   }, [selectionAction]);
 
   // 点击查词按钮
-  const handleSelectionLookup = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleSelectionLookup = (e?: React.MouseEvent | React.TouchEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (!selectionAction) return;
 
     openDictionary({
@@ -1311,28 +1545,53 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
     setSelectionAction(null);
     try {
       window.getSelection()?.removeAllRanges();
-    } catch {
-      // ignore
-    }
+    } catch {}
+  };
+
+  // 点击复制按钮
+  const handleCopySelection = async (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectionAction) return;
+    const textToCopy = selectionAction.text;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(textToCopy);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = textToCopy;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => {
+        setCopied(false);
+        setSelectionAction(null);
+        try {
+          window.getSelection()?.removeAllRanges();
+        } catch {}
+      }, 750);
+    } catch {}
   };
 
   // 坐标计算：将按钮定位于光标终点的正上方，并防溢出边界
   const tooltipLabel = selectionAction ? getSelectionTooltipLabel(selectionAction.text) : '';
   const tooltipPos = (() => {
     if (!selectionAction) return null;
-    // 依据实际文案估算按钮宽度（中文约 13px/字），避免长文案按钮被视口截断
-    const estWidth = Math.min(260, 34 + tooltipLabel.length * 13);
+    const estWidth = Math.min(280, 52 + tooltipLabel.length * 13 + 28);
     const clampedX = Math.max(
       estWidth / 2 + 12,
       Math.min(window.innerWidth - estWidth / 2 - 12, selectionAction.cursorX)
     );
-    // 关键优化：若在输入框中，加大抬升高度（56px），舒适悬浮于行上方，绝不遮挡输入文字与光标
     const isInput = !!selectionAction.isInput;
-    const offset = isInput ? 56 : 38;
+    const offset = isInput ? 56 : 42;
     let top = selectionAction.cursorY - offset;
     if (top < 8) {
-      // 顶部空间不足，翻转至光标下方
-      top = selectionAction.cursorY + (isInput ? 28 : 24);
+      top = selectionAction.cursorY + (isInput ? 28 : 26);
     }
     return { left: clampedX, top };
   })();
@@ -1355,7 +1614,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
     >
       {children}
 
-      {/* 划词悬浮快捷查词按钮：挂载在 body 顶层，无“查词：”前缀，定位在光标上方 */}
+      {/* 划词悬浮快捷查词/复制胶囊 */}
       {selectionAction &&
         tooltipPos &&
         createPortal(
@@ -1363,7 +1622,6 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
             ref={tooltipRef}
             className="selection-lookup-tooltip"
             data-theme={themeColor}
-            title={`查询：${selectionAction.text.replace(/\s+/g, ' ').trim()}`}
             style={{
               left: `${tooltipPos.left}px`,
               top: `${tooltipPos.top}px`,
@@ -1372,14 +1630,41 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
               e.preventDefault();
               e.stopPropagation();
             }}
-            onMouseUp={(e) => {
-              e.preventDefault();
+            onTouchStart={(e) => {
               e.stopPropagation();
             }}
-            onClick={handleSelectionLookup}
           >
-            <BookOpen size={12} />
-            <span>{tooltipLabel}</span>
+            <button
+              type="button"
+              className="selection-tooltip-btn btn-lookup"
+              onClick={handleSelectionLookup}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleSelectionLookup(e);
+              }}
+              title={`查词：${selectionAction.text.replace(/\s+/g, ' ').trim()}`}
+            >
+              <BookOpen size={13} />
+              <span>{tooltipLabel}</span>
+            </button>
+
+            <div className="selection-tooltip-divider" />
+
+            <button
+              type="button"
+              className={`selection-tooltip-btn btn-copy ${copied ? 'btn-copied' : ''}`}
+              onClick={handleCopySelection}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleCopySelection(e);
+              }}
+              title={copied ? '已复制' : '复制所选内容'}
+              aria-label={copied ? '已复制' : '复制所选内容'}
+            >
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
           </div>,
           document.body
         )}

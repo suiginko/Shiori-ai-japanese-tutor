@@ -6,7 +6,6 @@ import { InputArea } from './components/Chat/InputArea';
 import { ChatHistoryDrawer } from './components/Chat/ChatHistoryDrawer';
 import { LearningPlanModal } from './components/TutorPlan/LearningPlanModal';
 import { KanaModal } from './components/Reference/KanaModal';
-import { GrammarLibraryModal } from './components/Reference/GrammarLibraryModal';
 import { KnowledgeReviewModal } from './components/Reference/KnowledgeReviewModal';
 import { SettingsModal } from './components/Settings/SettingsModal';
 import { DictionaryProvider } from './context/DictionaryContext';
@@ -15,6 +14,8 @@ import { ChatMessage, RoleplayScenario } from './types';
 import { sanitizeActionDescriptions } from './utils/languageDetector';
 import { countCompletedTurns } from './utils/subtitleHelper';
 import { syncNameRubyFromSettings } from './utils/nameRubyHelper';
+import { setupStatusBar } from './utils/statusBarHelper';
+import { initBackButtonManager, useBackButton } from './utils/backButtonManager';
 
 export function App() {
   const {
@@ -46,8 +47,6 @@ export function App() {
     setPlanModalOpen,
     kanaModalOpen,
     setKanaModalOpen,
-    grammarModalOpen,
-    setGrammarModalOpen,
     settingsModalOpen,
     setSettingsModalOpen,
     historyDrawerOpen,
@@ -106,12 +105,121 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // 同步系统主题色至 html 及 body，确保 Portal 弹窗（如词典悬浮窗）全面继承主题变量
+  // 初始化手机返回键与手势返回管理器（包含双击返回退出提示）
+  useEffect(() => {
+    return initBackButtonManager();
+  }, []);
+
+  // 注册全屏模态框与历史抽屉的返回事件监听（按优先级自动依序出栈）
+  useBackButton('settings-modal', settingsModalOpen, () => setSettingsModalOpen(false), 50);
+  useBackButton('knowledge-modal', knowledgeModalOpen, () => {
+    setKnowledgeModalOpen(false);
+    setKnowledgeHighlightTarget(null);
+  }, 50);
+  useBackButton('history-drawer', historyDrawerOpen, () => setHistoryDrawerOpen(false), 50);
+  useBackButton('plan-modal', planModalOpen, () => setPlanModalOpen(false), 50);
+  useBackButton('kana-modal', kanaModalOpen, () => setKanaModalOpen(false), 50);
+
+  // 自动监听系统深浅色偏好与模式切换
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = (e: MediaQueryListEvent) => {
+      setSystemPrefersDark(e.matches);
+    };
+
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handleChange);
+      return () => mediaQuery.removeEventListener('change', handleChange);
+    } else {
+      mediaQuery.addListener(handleChange);
+      return () => mediaQuery.removeListener(handleChange);
+    }
+  }, []);
+
+  // 动态同步移动端软键盘/可视视口真实高度（VisualViewport Height）
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleVisualViewport = () => {
+      const vv = window.visualViewport;
+      const vh = vv ? vv.height : window.innerHeight;
+      document.documentElement.style.setProperty('--app-viewport-height', `${vh}px`);
+      // 键盘唤起或视口变化时锁定 window 偏移，防止页面外层被拉升产生闪烁与白边
+      if (window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+      const isKeyboardOpen = window.innerHeight - vh > 120;
+      document.documentElement.setAttribute('data-keyboard-open', isKeyboardOpen ? 'true' : 'false');
+    };
+
+    handleVisualViewport();
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleVisualViewport);
+      window.visualViewport.addEventListener('scroll', handleVisualViewport);
+    } else {
+      window.addEventListener('resize', handleVisualViewport);
+    }
+
+    return () => {
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleVisualViewport);
+        window.visualViewport.removeEventListener('scroll', handleVisualViewport);
+      } else {
+        window.removeEventListener('resize', handleVisualViewport);
+      }
+    };
+  }, []);
+
+  const effectiveThemeMode = settings.themeMode || 'system';
+  const isDarkMode =
+    effectiveThemeMode === 'dark' || (effectiveThemeMode === 'system' && systemPrefersDark);
+
+  // 同步系统主题色及深浅模式至 html、body，并联动手机顶部沉浸式状态栏
   useEffect(() => {
     const theme = settings.themeColor || 'sakura';
     document.documentElement.setAttribute('data-theme', theme);
     document.body.setAttribute('data-theme', theme);
-  }, [settings.themeColor]);
+
+    const modeStr = isDarkMode ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme-mode', modeStr);
+    document.body.setAttribute('data-theme-mode', modeStr);
+
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark-mode');
+      document.body.classList.add('dark-mode');
+    } else {
+      document.documentElement.classList.remove('dark-mode');
+      document.body.classList.remove('dark-mode');
+    }
+
+    // 原生手机沉浸式状态栏自适应（白字/黑字、透明顶栏）及浏览器 theme-color 同步
+    setupStatusBar(isDarkMode);
+  }, [settings.themeColor, isDarkMode]);
+
+  // 同步全局字体配置至 html 与 body，使全站所有组件及 React Portal 浮层（词典弹窗、查词工具栏等）统一受控
+  useEffect(() => {
+    const fontFamily = settings.fontFamily || 'noto-sans';
+    document.documentElement.setAttribute('data-font-family', fontFamily);
+    document.body.setAttribute('data-font-family', fontFamily);
+
+    const customFont = settings.customFontFamily?.trim();
+    if (customFont) {
+      document.documentElement.style.setProperty('--font-custom', customFont);
+      document.body.style.setProperty('--font-custom', customFont);
+    } else {
+      document.documentElement.style.removeProperty('--font-custom');
+      document.body.style.removeProperty('--font-custom');
+    }
+  }, [settings.fontFamily, settings.customFontFamily]);
 
   // 同步用户在双方名字或人设中指定的注音至全局注音解析引擎（影响对话中提到名字时的注音）
   useEffect(() => {
@@ -407,13 +515,13 @@ export function App() {
 
   return (
     <div
-      className={`app-root-layout app-container theme-${settings.themeColor || 'sakura'} font-${settings.fontFamily || 'noto-sans'}`}
+      className={`app-root-layout app-container theme-${settings.themeColor || 'sakura'} font-${settings.fontFamily || 'noto-sans'} ${isDarkMode ? 'dark-mode' : ''}`}
       data-theme={settings.themeColor || 'sakura'}
+      data-theme-mode={isDarkMode ? 'dark' : 'light'}
       data-font-family={settings.fontFamily || 'noto-sans'}
       data-font-size={settings.fontSize || 'md'}
       data-ruby-size={settings.rubySize || 'default'}
       data-bubble-density={settings.bubbleDensity || 'normal'}
-      data-pitch-color={settings.pitchLineColor || 'theme'}
       style={
         {
           '--ruby-color': rubyColorValue,
@@ -446,7 +554,6 @@ export function App() {
           onPitchDisplayModeChange={(mode) => setSettings({ ...settings, pitchDisplayMode: mode })}
           onOpenPlan={() => setPlanModalOpen(true)}
           onOpenKana={() => setKanaModalOpen(true)}
-          onOpenGrammar={() => setGrammarModalOpen(true)}
           onOpenKnowledge={() => {
             setKnowledgeHighlightTarget(null);
             setKnowledgeModalOpen(true);
@@ -460,6 +567,7 @@ export function App() {
         {/* Main Interactive Chat Workspace */}
         <main className="app-main-workspace">
           <ChatContainer
+            sessionId={currentSessionId}
             messages={messages}
             furiganaMode={settings.furiganaMode}
             pitchDisplayMode={settings.pitchDisplayMode}
@@ -531,11 +639,6 @@ export function App() {
         <KanaModal
           isOpen={kanaModalOpen}
           onClose={() => setKanaModalOpen(false)}
-        />
-
-        <GrammarLibraryModal
-          isOpen={grammarModalOpen}
-          onClose={() => setGrammarModalOpen(false)}
         />
 
         <KnowledgeReviewModal

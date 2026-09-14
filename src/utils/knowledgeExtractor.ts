@@ -566,3 +566,201 @@ export function collectNewWordRefs(
   }
   return refs;
 }
+
+/**
+ * 严格判定候选单词是否已存在于学情生词档案中。
+ * 综合考虑：表面词完全匹配、辞书原型 (lemma) 匹配、形态素反活用 (deinflect) 匹配、以及词典条目对齐。
+ */
+export function isWordAlreadyLearned(
+  candidate: { surface?: string; reading?: string },
+  knownWords: LearnedWord[]
+): boolean {
+  if (!candidate || !candidate.surface) return false;
+  const rawSurface = candidate.surface.trim();
+  if (!rawSurface) return false;
+
+  // 1. 查询词典规范词形与原型
+  const dict = dictionaryService.lookup(rawSurface, candidate.reading);
+  const canonicalSurface = dict.lemma?.trim() || dict.word?.trim() || rawSurface;
+  const candidateLemma = dict.lemma?.trim() || '';
+
+  // 2. 形态素反向活用候选（若为动词/形容词活用形，一并纳入匹配）
+  const deinflectedCandidates = deinflect(rawSurface).map((c) => c.lemma.trim());
+
+  return knownWords.some((existing) => {
+    const existingSurface = (existing.surface || '').trim();
+    if (!existingSurface) return false;
+
+    // A. 表面词完全匹配
+    if (existingSurface === rawSurface || existingSurface === canonicalSurface) {
+      return true;
+    }
+
+    // B. 辞书原型 (lemma) 匹配
+    if (candidateLemma && existingSurface === candidateLemma) {
+      return true;
+    }
+
+    // C. 反活用候选匹配
+    if (deinflectedCandidates.includes(existingSurface)) {
+      return true;
+    }
+
+    // D. 已有词的原型与当前词匹配
+    const existingDict = dictionaryService.lookup(existingSurface, existing.reading);
+    const existingLemma = existingDict.lemma?.trim() || existingDict.word?.trim() || '';
+    if (existingLemma) {
+      if (
+        existingLemma === rawSurface ||
+        existingLemma === canonicalSurface ||
+        (candidateLemma && existingLemma === candidateLemma) ||
+        deinflectedCandidates.includes(existingLemma)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+}
+
+/**
+ * 生成语法句型的常用简体/敬体/活用变体，用于跨形态精准排重比对
+ */
+export function getGrammarVariations(title: string): string[] {
+  const norm = normalizeGrammarKey(title);
+  if (!norm) return [];
+  const variations = new Set<string>([norm]);
+
+  // 1. 敬体/简体变体映射
+  const politeToPlain: Array<[RegExp, string]> = [
+    [/思います$/, '思う'],
+    [/言います$/, '言う'],
+    [/行きます$/, '行く'],
+    [/来ます$/, '来る'],
+    [/します$/, 'する'],
+    [/できます$/, 'できる'],
+    [/あります$/, 'ある'],
+    [/います$/, 'いる'],
+    [/なります$/, 'なる'],
+    [/分かります$/, '分かる'],
+    [/てしまいます$/, 'てしまう'],
+    [/ていきます$/, 'ていく'],
+    [/てきます$/, 'てくる'],
+    [/てみます$/, 'てみる'],
+    [/てはいけません$/, 'てはいけない'],
+    [/なければなりません$/, 'なければならない'],
+    [/たいです$/, 'たい'],
+    [/つもりです$/, 'つもりだ'],
+    [/かもしれません$/, 'かもしれない'],
+    [/はずです$/, 'はずだ'],
+    [/ようです$/, 'ようだ'],
+    [/そうです$/, 'そうだ'],
+    [/らしいです$/, 'らしい'],
+    [/でしょう$/, 'だろう'],
+    [/ません$/, 'ない'],
+    [/ました$/, 'た'],
+    [/です$/, 'だ'],
+  ];
+
+  for (const [reg, rep] of politeToPlain) {
+    if (reg.test(norm)) {
+      variations.add(norm.replace(reg, rep));
+    }
+  }
+
+  const plainToPolite: Array<[RegExp, string]> = [
+    [/思う$/, '思います'],
+    [/言う$/, '言います'],
+    [/行く$/, '行きます'],
+    [/来る$/, '来ます'],
+    [/する$/, 'します'],
+    [/できる$/, 'できます'],
+    [/ある$/, 'あります'],
+    [/いる$/, 'います'],
+    [/なる$/, 'なります'],
+    [/分かる$/, '分かります'],
+    [/てしまう$/, 'てしまいます'],
+    [/ていく$/, 'ていきます'],
+    [/てくる$/, 'てきます'],
+    [/てみる$/, 'てみます'],
+    [/てはいけない$/, 'てはいけません'],
+    [/なければならない$/, 'なければなりません'],
+    [/たい$/, 'たいです'],
+    [/つもりだ$/, 'つもりです'],
+    [/かもしれない$/, 'かもしれません'],
+    [/はずだ$/, 'はずです'],
+    [/ようだ$/, 'ようです'],
+    [/そうだ$/, 'そうです'],
+    [/らしい$/, 'らしいです'],
+    [/だろう$/, 'でしょう'],
+    [/だ$/, 'です'],
+  ];
+
+  for (const [reg, rep] of plainToPolite) {
+    if (reg.test(norm)) {
+      variations.add(norm.replace(reg, rep));
+    }
+  }
+
+  // 2. 利用形态素反向活用对尾部动词进行解析
+  const deinflected = deinflect(norm);
+  for (const d of deinflected) {
+    if (d.lemma) variations.add(normalizeGrammarKey(d.lemma));
+  }
+
+  return Array.from(variations);
+}
+
+/**
+ * 严格判定候选语法是否已存在于学情语法档案中。
+ * 综合考虑：标点与声调清理、波浪线与括号归一化 (normalizeGrammarKey)、简体/敬体活用变体、以及权威句型库规范化标题对齐。
+ */
+export function isGrammarAlreadyLearned(
+  candidate: { title?: string; exampleJp?: string },
+  knownGrammars: LearnedGrammar[]
+): boolean {
+  if (!candidate || !candidate.title) return false;
+  const rawTitle = candidate.title.trim();
+  if (!rawTitle) return false;
+
+  const stripPitchAndPunctuation = (str?: string) =>
+    (str || '')
+      .replace(/\[([ぁ-んァ-ヶー]+)\|\d+\]/g, '[$1]')
+      .replace(/[。！？!?、,\s]+$/, '')
+      .trim();
+
+  const cleanTitle = stripPitchAndPunctuation(rawTitle);
+  const synthesized = synthesizeGrammarDetails(cleanTitle, candidate.exampleJp);
+  const canonicalTitle = synthesized.title ? stripPitchAndPunctuation(synthesized.title) : cleanTitle;
+
+  const candidateVariations = new Set([
+    ...getGrammarVariations(rawTitle),
+    ...getGrammarVariations(cleanTitle),
+    ...getGrammarVariations(canonicalTitle),
+  ]);
+
+  return knownGrammars.some((existing) => {
+    const existingRawTitle = (existing.title || '').trim();
+    const existingCleanTitle = stripPitchAndPunctuation(existingRawTitle);
+    const existingVariations = getGrammarVariations(existingCleanTitle);
+
+    for (const v of existingVariations) {
+      if (candidateVariations.has(v)) {
+        return true;
+      }
+    }
+
+    if (synthesized.title) {
+      const synthVariations = getGrammarVariations(synthesized.title);
+      for (const v of synthVariations) {
+        if (existingVariations.includes(v)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  });
+}
+

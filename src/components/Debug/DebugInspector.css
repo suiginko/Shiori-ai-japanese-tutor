@@ -47,25 +47,25 @@
 }
 
 .debug-inspector-container[data-theme='dark'] {
-  --dbg-bg: #0b0f19;
-  --dbg-bg-header: #111827;
-  --dbg-bg-sidebar: #0f172a;
-  --dbg-bg-panel: #111827;
-  --dbg-bg-panel-2: #162032;
-  --dbg-bg-elevated: #182234;
-  --dbg-bg-inset: #090d16;
-  --dbg-border: #1f2937;
-  --dbg-border-strong: #334155;
-  --dbg-text: #f1f5f9;
-  --dbg-text-dim: #cbd5e1;
-  --dbg-text-mute: #94a3b8;
-  --dbg-text-faint: #64748b;
+  --dbg-bg: #141414;
+  --dbg-bg-header: #1a1a1a;
+  --dbg-bg-sidebar: #181818;
+  --dbg-bg-panel: #1e1e1e;
+  --dbg-bg-panel-2: #242424;
+  --dbg-bg-elevated: #2a2a2a;
+  --dbg-bg-inset: #101010;
+  --dbg-border: #2c2c2c;
+  --dbg-border-strong: #404040;
+  --dbg-text: #f5f5f5;
+  --dbg-text-dim: #d4d4d4;
+  --dbg-text-mute: #a3a3a3;
+  --dbg-text-faint: #737373;
   --dbg-accent: #818cf8;
   --dbg-accent-strong: #6366f1;
   --dbg-accent-wash: rgba(99, 102, 241, 0.16);
-  --dbg-hover: #273549;
+  --dbg-hover: #2c2c2c;
   --dbg-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
-  --dbg-code-bg: #090d16;
+  --dbg-code-bg: #101010;
   --dbg-code-text: #e2e8f0;
   --dbg-scroll-thumb: #334155;
   --dbg-hl-bg: rgba(250, 204, 21, 0.28);
@@ -157,7 +157,7 @@
 }
 .debug-brand-text strong {
   font-size: 13.5px;
-  font-weight: 700;
+  font-weight: normal;
   letter-spacing: 0.2px;
   white-space: nowrap;
 }
@@ -251,6 +251,38 @@
   color: var(--dbg-text);
   background: var(--dbg-hover);
   border-color: var(--dbg-accent-strong);
+}
+
+.debug-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 4px 22px 4px 8px;
+  font-size: 11.5px;
+  border-radius: 6px;
+  border: 1px solid var(--dbg-border);
+  background-color: var(--dbg-bg-elevated);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  background-size: 11px 11px;
+  color: var(--dbg-text);
+  outline: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.debug-select:hover {
+  border-color: var(--dbg-accent);
+}
+
+.debug-select:focus {
+  border-color: var(--dbg-accent);
+  box-shadow: 0 0 0 2px var(--dbg-accent-wash);
+}
+
+.debug-select option {
+  background-color: var(--dbg-bg-panel);
+  color: var(--dbg-text);
 }
 
 /* 通用按钮 */
@@ -410,7 +442,7 @@
   background: var(--dbg-accent-wash);
   border-color: var(--dbg-accent-strong);
   color: var(--dbg-accent);
-  font-weight: 600;
+  font-weight: normal;
 }
 .debug-chip-btn.pin-chip {
   background: var(--dbg-bg-elevated);
@@ -422,7 +454,7 @@
 }
 .debug-chip-count {
   font-size: 10px;
-  font-weight: 700;
+  font-weight: normal;
   padding: 0 4px;
   border-radius: 4px;
   background: var(--dbg-bg-inset);
@@ -478,7 +510,7 @@
   background: transparent;
   color: var(--dbg-text-mute);
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 5px;
@@ -517,7 +549,7 @@
 }
 .debug-stat-value {
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: normal;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   color: var(--dbg-text);
   display: inline-flex;
@@ -568,7 +600,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text-dim);
 }
 .debug-sidebar-title em {
@@ -662,7 +694,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text-mute);
 }
 .debug-card-time {
@@ -674,7 +706,7 @@
 
 .debug-card-title {
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text);
   line-height: 1.4;
   display: -webkit-box;
@@ -785,7 +817,7 @@
   background: var(--dbg-accent-strong);
   color: #fff;
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: normal;
   cursor: pointer;
   box-shadow: var(--dbg-shadow);
   z-index: 5;
@@ -854,7 +886,7 @@ body.debug-resizing * {
   flex-wrap: wrap;
   min-width: 0;
   font-size: 14.5px;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--dbg-text);
 }
 .debug-banner-name {
@@ -871,7 +903,7 @@ body.debug-resizing * {
 }
 .debug-banner-status {
   font-size: 10.5px;
-  font-weight: 600;
+  font-weight: normal;
   padding: 1px 8px;
   border-radius: 9999px;
   border: 1px solid var(--dbg-border-strong);
@@ -951,7 +983,7 @@ body.debug-resizing * {
 }
 .debug-metric-value {
   font-size: 13px;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--dbg-text);
   font-family: ui-monospace, Menlo, Consolas, monospace;
   overflow: hidden;
@@ -1059,7 +1091,7 @@ body.debug-resizing * {
 .debug-tab-btn.active {
   color: var(--dbg-accent);
   border-bottom-color: var(--dbg-accent);
-  font-weight: 600;
+  font-weight: normal;
 }
 .debug-tab-count {
   font-style: normal;
@@ -1132,7 +1164,7 @@ body.debug-resizing * {
   align-items: center;
   gap: 7px;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text-dim);
   min-width: 0;
 }
@@ -1192,7 +1224,7 @@ body.debug-resizing * {
   justify-content: space-between;
   gap: 10px;
   font-size: 11.5px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text-mute);
   flex-wrap: wrap;
 }
@@ -1260,7 +1292,7 @@ body.debug-resizing * {
   background: var(--dbg-bg-panel-2);
   border-bottom: 1px solid var(--dbg-border);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: normal;
 }
 .debug-msg-meta {
   display: inline-flex;
@@ -1294,7 +1326,7 @@ body.debug-resizing * {
   border-radius: 5px;
   font-size: 10px;
   text-transform: uppercase;
-  font-weight: 700;
+  font-weight: normal;
   letter-spacing: 0.5px;
 }
 .role-tag.user { background: rgba(59, 130, 246, 0.18); color: #60a5fa; }
@@ -1356,7 +1388,7 @@ body.debug-resizing * {
   background: var(--dbg-accent-wash);
   border-color: var(--dbg-accent-strong);
   color: var(--dbg-accent);
-  font-weight: 600;
+  font-weight: normal;
 }
 .debug-viewswitch-btn:disabled {
   opacity: 0.4;
@@ -1445,7 +1477,7 @@ body.debug-resizing * {
 }
 .debug-kv-value {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1473,7 +1505,7 @@ body.debug-resizing * {
 }
 .debug-state-card-title {
   font-size: 11.5px;
-  font-weight: 700;
+  font-weight: normal;
   color: var(--dbg-accent);
   padding-bottom: 6px;
   border-bottom: 1px solid var(--dbg-border);
@@ -1490,7 +1522,7 @@ body.debug-resizing * {
   flex-shrink: 0;
 }
 .debug-state-row strong {
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text-dim);
   text-align: right;
   word-break: break-word;
@@ -1522,7 +1554,7 @@ body.debug-resizing * {
 }
 .debug-empty-state h3 {
   font-size: 13.5px;
-  font-weight: 600;
+  font-weight: normal;
   color: var(--dbg-text-mute);
 }
 .debug-empty-state p {
