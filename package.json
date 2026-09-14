@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc && vite build",
+    "start": "node scripts/server.cjs",
     "build:zip": "node scripts/make_zip.cjs",
     "build:apk": "npx cap sync android",
     "lint": "oxlint",

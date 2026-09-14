@@ -34,33 +34,36 @@
 
 ## 🚀 快速启动
 
-### 方式一：面向普通用户（开箱即用，无需 Node.js）
-1. 下载最新的发布压缩包。
+### 方式一：面向普通用户（开箱即用，无需配置开发环境）
+1. 前往 Releases 下载最新的发布压缩包（`Shiori-AI-Japanese-Tutor_vX.X.X.zip`）。
 2. 解压至任意文件夹。
-3. **Windows 用户**：双击运行 `Start_Windows.bat`。
+3. **Windows 用户**：双击解压目录中的 `Start_Windows.bat` 即可（无需安装 Node.js）。
 4. **macOS / Linux 用户**：终端运行 `bash start_unix.sh`。
 5. 系统将自动在浏览器中打开 `http://localhost:5273`。
 
 ---
 
-### 方式二：面向开发者（从源码构建与开发）
+### 方式二：面向开发者（从源码运行与开发）
 
-#### 1. 克隆仓库
+#### 1. 克隆仓库与安装依赖
 ```bash
 git clone https://github.com/suiginko/Shiori-ai-japanese-tutor.git
 cd Shiori-ai-japanese-tutor
-```
-
-#### 2. 安装依赖
-```bash
 npm install
 ```
 
-#### 3. 启动本地开发服务
-```bash
-npm run dev
-```
-打开浏览器访问控制台提示的地址（默认 `http://localhost:5173` 或 `http://localhost:5273`）。
+#### 2. 启动服务
+* **实时热重载开发环境**：
+  ```bash
+  npm run dev
+  ```
+* **一键启动本地私教生产服务**：
+  ```bash
+  npm start
+  ```
+  *(Windows 用户也可直接双击 `scripts/start_windows.bat` 启动)*
+
+打开浏览器访问控制台提示的地址（默认 `http://localhost:5273`）。
 
 #### 4. 生产构建打包
 ```bash
