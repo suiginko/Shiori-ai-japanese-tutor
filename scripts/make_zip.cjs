@@ -3,9 +3,11 @@ const path = require('path');
 const { execSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
+const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
+const version = pkg.version || '0.1.2';
 const releaseDir = path.join(rootDir, 'release', 'Shiori-AI-Japanese-Tutor');
-const zipFile = path.join(rootDir, 'Shiori-AI-Japanese-Tutor_v0.1.1.zip');
-const cnZipFile = path.join(rootDir, '栞-Shiori-AI日语私教_v0.1.1.zip');
+const zipFile = path.join(rootDir, `Shiori-AI-Japanese-Tutor_v${version}.zip`);
+const cnZipFile = path.join(rootDir, `栞-Shiori-AI日语私教_v${version}.zip`);
 
 console.log('1. 清理旧 release 目录与压缩包...');
 if (fs.existsSync(releaseDir)) {
@@ -25,7 +27,7 @@ console.log('3. 创建干净规范的启动脚本与说明文件...');
 // 1. 双击启动.bat (Windows 启动脚本 - 采用纯 ASCII 编码彻底杜绝系统字符集乱码)
 const batContent = `@echo off
 cd /d "%~dp0"
-title Shiori AI Tutor (v0.1.1)
+title Shiori AI Tutor (v${version})
 
 where node >nul 2>nul
 if %errorlevel% equ 0 (

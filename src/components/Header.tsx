@@ -110,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="brand-title">
               <span className="brand-name-text">栞 (Shiori)</span>
               <span className="brand-title-sub">AI 智能私教</span>
-              <span className="brand-version-badge">v0.1.1</span>
+              <span className="brand-version-badge">v0.1.2</span>
             </div>
             <span className="brand-tagline">日文自然语言沉浸式伴学系统</span>
           </div>
