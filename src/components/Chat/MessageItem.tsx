@@ -122,8 +122,30 @@ function parseParenthesisSegments(text: string): ParenSegment[] {
         i = matchEnd;
         continue;
       } else {
-        // 未找到配对闭括号，开括号视为普通文本，继续后移
-        i++;
+        // 未找到配对闭括号：
+        // 关键优化：在流式输出中（或单边左括号情境下），自开括号起到当前文本末尾直接作为括号灰显内容处理！
+        // 这样在输出过程中即便只有左侧括号，后续吐字也会即刻呈灰色，当右括号到达时平滑无缝闭合，杜绝突兀变色。
+        if (matchStart > lastIndex) {
+          segments.push({
+            type: 'plain',
+            content: text.substring(lastIndex, matchStart),
+          });
+        }
+
+        const fullText = text.substring(matchStart);
+        const inner = fullText.slice(1);
+
+        segments.push({
+          type: 'paren',
+          content: fullText,
+          openParen,
+          closeParen: '',
+          inner,
+        });
+
+        lastIndex = len;
+        i = len;
+        break;
       }
     } else {
       i++;

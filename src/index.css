@@ -8612,7 +8612,6 @@ input[type="range"]::-moz-range-thumb:hover,
   font-size: 0.94em;
   letter-spacing: 0.01em;
   display: inline;
-  transition: color 0.15s ease;
 }
 
 [data-theme-mode="dark"] .parenthesis-text,
@@ -8650,21 +8649,6 @@ input[type="range"]::-moz-range-thumb:hover,
 .bubble-user .parenthesis-text ruby rt,
 .bubble-user .roleplay-action-text ruby rt {
   color: rgba(255, 255, 255, 0.8) !important;
-}
-
-.parenthesis-text:hover,
-.roleplay-action-text:hover {
-  color: #475569 !important;
-}
-
-[data-theme-mode="dark"] .parenthesis-text:hover,
-[data-theme-mode="dark"] .roleplay-action-text:hover {
-  color: #cbd5e1 !important;
-}
-
-.bubble-user .parenthesis-text:hover,
-.bubble-user .roleplay-action-text:hover {
-  color: rgba(255, 255, 255, 0.95) !important;
 }
 
 /* 括号内灰显文本中的词汇与已查询划词词条（保留精致虚线与悬浮状态） */
