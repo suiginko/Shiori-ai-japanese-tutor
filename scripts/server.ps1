@@ -1,4 +1,4 @@
-# PowerShell 简易无依赖本地静态服务器 (适配 Windows 10/11 内置环境)
+﻿# PowerShell 简易无依赖本地静态服务器 (适配 Windows 10/11 内置环境)
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
