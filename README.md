@@ -61,7 +61,7 @@ npm install
   ```bash
   npm start
   ```
-  *(Windows 用户也可直接双击 `scripts/start_windows.bat` 启动)*
+  *(Windows 用户也可直接双击根目录下的 `Start_Windows.bat` 启动，Linux / macOS 用户可运行 `./start_unix.sh`)*
 
 打开浏览器访问控制台提示的地址（默认 `http://localhost:5273`）。
 
@@ -91,7 +91,9 @@ ai-japanese-tutor/
 │   ├── services/           # LLM 通信抽象层、TTS 语音合成、Token 优化器
 │   ├── state/              # 响应式全局状态树 (useAppStore)
 │   └── utils/              # 活用形还原算法、假名切分算法、音调数据解析
-├── server.cjs / .ps1       # 绿色免安装自宿主本地 HTTP 服务器
+├── Start_Windows.bat       # Windows 便携一键启动脚本
+├── start_unix.sh           # macOS / Linux 便携一键启动脚本
+├── scripts/                # 本地自宿主 HTTP 服务器与打包辅助脚本
 └── vite.config.ts          # Vite 现代前端构建配置
 ```
 
