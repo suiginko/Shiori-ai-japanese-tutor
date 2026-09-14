@@ -288,6 +288,20 @@ body {
   --primary-border: #cbd5e1;
 }
 
+/* ==================================================================== */
+/* 深色模式全局变量保护（防止被各主题调色板中硬编码的浅色洗色重置覆盖） */
+/* ==================================================================== */
+:root[data-theme-mode="dark"],
+[data-theme-mode="dark"],
+.dark-mode,
+:root[data-theme-mode="dark"][data-theme],
+[data-theme-mode="dark"][data-theme],
+.app-root-layout[data-theme-mode="dark"][data-theme] {
+  --primary-wash: color-mix(in srgb, var(--primary, #e11d48) 18%, transparent);
+  --primary-border: color-mix(in srgb, var(--primary, #e11d48) 36%, transparent);
+}
+
+
 
 
 /* ==================================================================== */
@@ -11014,6 +11028,12 @@ input[type="range"]::-moz-range-thumb:hover,
   border-color: rgba(22, 163, 74, 0.4);
 }
 
+.dark-mode .knowledge-filter-pill.active .filter-count-badge,
+[data-theme-mode="dark"] .knowledge-filter-pill.active .filter-count-badge {
+  background: color-mix(in srgb, var(--primary, #e11d48) 22%, transparent);
+  color: var(--primary-light, #f43f5e);
+}
+
 .dark-mode .knowledge-filter-pill.filter-learning.active .filter-count-badge,
 [data-theme-mode="dark"] .knowledge-filter-pill.filter-learning.active .filter-count-badge {
   background: rgba(37, 99, 235, 0.25);
@@ -11030,6 +11050,24 @@ input[type="range"]::-moz-range-thumb:hover,
 [data-theme-mode="dark"] .knowledge-filter-pill.filter-mastered.active .filter-count-badge {
   background: rgba(22, 163, 74, 0.25);
   color: #86efac;
+}
+
+.dark-mode .level-choice-btn.active,
+[data-theme-mode="dark"] .level-choice-btn.active {
+  background: color-mix(in srgb, var(--primary, #e11d48) 18%, var(--bg-surface));
+  border-color: var(--primary, #e11d48);
+}
+
+.dark-mode .persona-preset-chip-card.active,
+[data-theme-mode="dark"] .persona-preset-chip-card.active {
+  background: color-mix(in srgb, var(--primary, #e11d48) 18%, var(--bg-surface));
+  border-color: var(--primary, #e11d48);
+}
+
+.dark-mode .mastery-chip-btn:hover,
+[data-theme-mode="dark"] .mastery-chip-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
 }
 
 .dark-mode .inspector-save-btn,
