@@ -2,11 +2,19 @@
 /* 本地离线内置思源黑体（零依赖·零网络延迟·纯离线支持） */
 /* ==================================================================== */
 @font-face {
+  font-family: 'Shiori Noto Sans JP';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/NotoSansJP-Regular.woff2') format('woff2');
+}
+
+@font-face {
   font-family: 'Noto Sans JP';
   font-style: normal;
   font-weight: 100 900;
   font-display: swap;
-  src: local('Noto Sans JP'), url('/fonts/NotoSansJP-Regular.woff2') format('woff2');
+  src: url('/fonts/NotoSansJP-Regular.woff2') format('woff2');
 }
 
 :root {
@@ -177,7 +185,7 @@ b, strong, th {
 body {
   background-color: var(--bg-main);
   color: var(--text-body);
-  font-family: var(--font-japanese, 'Noto Sans JP', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-family: var(--font-japanese, 'Shiori Noto Sans JP', 'Noto Sans JP', 'Hiragino Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -288,19 +296,19 @@ body {
 :root,
 body,
 .app-root-layout {
-  --font-japanese-fallback: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'MiSans', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-japanese-fallback: 'Shiori Noto Sans JP', 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'MiSans', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
   --font-japanese: var(--font-japanese-fallback);
 }
 
 :root[data-font-family="noto-sans"],
 [data-font-family="noto-sans"],
 .app-root-layout[data-font-family="noto-sans"] {
-  --font-japanese: 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'MiSans', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --font-japanese: 'Shiori Noto Sans JP', 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'MiSans', 'HarmonyOS Sans SC', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
 }
 :root[data-font-family="custom"],
 [data-font-family="custom"],
 .app-root-layout[data-font-family="custom"] {
-  --font-japanese: var(--font-custom), 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', sans-serif;
+  --font-japanese: var(--font-custom), 'Shiori Noto Sans JP', 'Noto Sans JP', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', sans-serif;
 }
 :root[data-font-family="noto-serif"],
 [data-font-family="noto-serif"],
