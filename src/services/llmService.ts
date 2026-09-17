@@ -1,8 +1,80 @@
+import { Capacitor } from '@capacitor/core';
 import { ApiSettings, ChatMessage, ChatSession, StudyMode, UserLearningProfile, RoleplayScenario, LearningPlan, LearnedWord, LearnedGrammar } from '../types';
 import { buildSystemPrompt, isDebugQuery, optimizeMessagesContext } from './tokenOptimizer';
 import { sanitizeActionDescriptions, detectQueryLanguage } from '../utils/languageDetector';
+import {
+  stripAnnotatedBlockMarks,
+  deriveReadingFromAnnotated,
+  sanitizeAnnotatedText,
+} from '../utils/rubyParser';
+
+// 注音串清洗器已收归块语法的唯一持有者 rubyParser，此处再导出以保持既有引用面不变
+export { sanitizeAnnotatedText };
 import { countTokens } from '../utils/tokenCounter';
 import { debugLogger } from './debugLogger';
+
+/**
+ * 判断当前运行环境是否应当使用 PC 本地 Node.js 代理 (/api/gemini)。
+ *
+ * 核心规则：
+ * 1. 移动端原生 App (Capacitor Android / iOS) 内部没有运行 PC 的 server.cjs，严禁走 /api/gemini（否则会请求手机本地静态服务器返回 index.html 导致 JSON 解析异常）；
+ * 2. 只有在非原生 App、且处于 PC 本地环境（localhost / 127.0.0.1）时，才使用本地代理借用电脑上的代理端口；
+ * 3. 一旦在手机 App 端、或用户显式配置了自定义的非默认 baseUrl，一律走标准的 OpenAI 兼容协议直连或反代。
+ */
+export function shouldUseLocalGeminiProxy(settings: ApiSettings): boolean {
+  if (settings.provider !== 'gemini') return false;
+
+  // 1. 原生移动端 App 绝对不能走本地相对路径代理
+  if (typeof window !== 'undefined') {
+    try {
+      if (
+        Capacitor.isNativePlatform() ||
+        window.location.protocol === 'capacitor:' ||
+        window.location.protocol === 'ionic:'
+      ) {
+        return false;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 2. 仅在浏览器本地运行（由 PC 端 scripts/server.cjs 托管）时有效
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    const isLocalHost = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+    if (!isLocalHost) {
+      return false;
+    }
+  }
+
+  // 3. 用户如果显式填写了自定义反代 Base URL（不同于默认官方地址），应尊重用户的配置走该地址
+  const customBase = (settings.baseUrl || '').trim();
+  const defaultGeminiBase = 'https://generativelanguage.googleapis.com/v1beta/openai';
+  if (customBase && customBase !== defaultGeminiBase && customBase !== `${defaultGeminiBase}/`) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * 解析大模型请求的最终绝对/相对 endpoint 地址
+ */
+export function resolveApiEndpoint(settings: ApiSettings): string {
+  if (settings.provider === 'gemini') {
+    if (shouldUseLocalGeminiProxy(settings)) {
+      return '/api/gemini';
+    }
+    // 移动端 App 或自定义反代端：走标准 OpenAI 兼容接口
+    const rawBase = (settings.baseUrl && settings.baseUrl.trim()) || 'https://generativelanguage.googleapis.com/v1beta/openai';
+    const cleanBase = rawBase.replace(/\/+$/, '');
+    return cleanBase.endsWith('/chat/completions') ? cleanBase : `${cleanBase}/chat/completions`;
+  }
+
+  const base = settings.baseUrl.trim().replace(/\/+$/, '');
+  return base.endsWith('/chat/completions') ? base : `${base}/chat/completions`;
+}
 
 export interface TokenUsage {
   prompt: number;
@@ -14,10 +86,60 @@ export interface TokenUsage {
 
 export interface StreamCallback {
   onChunk: (delta: string) => void;
+  /**
+   * 深度思考（推理链）增量回调。
+   * 只有当用户开启深度思考、且服务端确实在吐推理内容时才会被调用；
+   * 关闭深度思考时该回调永远不会触发，界面也就不会出现思考区块。
+   */
+  onReasoning?: (delta: string) => void;
   onDone: (fullText: string, tokensUsed: TokenUsage) => void;
   onError: (error: Error) => void;
   // 暴露本次请求的 AbortController，供外部「停止生成」按钮真正中止请求
   onControllerReady?: (controller: AbortController) => void;
+}
+
+/**
+ * 判断本次请求是否需要"深度思考"能力（是否向用户展示推理过程）。
+ * 'off' 时彻底屏蔽推理内容，其余（auto / on）都允许展示。
+ */
+function isDeepThinkingEnabled(settings: ApiSettings): boolean {
+  return (settings.deepThinkingMode || 'auto') !== 'off';
+}
+
+/**
+ * 依据供应商注入「强制开启推理」的请求参数。
+ *
+ * 铁律：只在**已知该供应商明确支持**时才注入，绝不给未知接口塞自定义字段——
+ * OpenAI 兼容协议对未知参数的处理各家不一（有的忽略、有的直接 400），
+ * 宁可少注入，也不能让一个"开启思考"的开关把普通对话打挂。
+ * 因此 auto 模式下什么都不注入（优秀推理模型如 deepseek-reasoner 本就会主动吐推理链）。
+ */
+function buildThinkingParams(settings: ApiSettings): Record<string, any> {
+  if ((settings.deepThinkingMode || 'auto') !== 'on') return {};
+
+  const model = (settings.model || '').toLowerCase();
+
+  switch (settings.provider) {
+    case 'gemini':
+      // Gemini 经本地代理转成 generateContent，用 thinkingConfig.includeThoughts 索取思考摘要
+      return { thinkingConfig: { includeThoughts: true } };
+    case 'qwen':
+      // 阿里百炼兼容模式：流式下 enable_thinking 生效（非流式会报错，本项目恒为流式）
+      return { enable_thinking: true };
+    case 'siliconflow':
+      // 硅基流动对 DeepSeek / Qwen 系模型支持 enable_thinking
+      return { enable_thinking: true };
+    case 'openai':
+      // 仅推理系模型接受 reasoning_effort；给 gpt-4o 之流传该参数会被 400 拒绝
+      return /^(o[1-9]|gpt-5|gpt-4\.1)/.test(model) ? { reasoning_effort: 'medium' } : {};
+    case 'custom':
+      // 自定义网关：仅在模型名明确指向推理模型时注入常见思考开关
+      return /deepseek|qwen|reason|qwq|r1|glm-4\.\d/i.test(model) ? { enable_thinking: true } : {};
+    default:
+      // deepseek 官方（deepseek-reasoner 自动返回推理）、kimi、groq、ollama、openrouter 等
+      // 均通过模型自身决定是否输出推理内容，无需也不应注入额外参数
+      return {};
+  }
 }
 
 // Helper: 生成未接入 API Key 时的状态说明与配置指引
@@ -37,12 +159,12 @@ function generateNoApiKeyNotice(settings: ApiSettings): string {
 
   return `【⚠️ 状态提示：当前尚未接入 API Key】
 
-你好！我是你的专属 AI 日语私教 **${tutorName}** 🌸。
+你好！我是你的专属 AI 日语老师 **${tutorName}** 🌸。
 
 当前系统检测到你**尚未配置有效的 ${currentProvider} API Key**，因此 AI 处于**离线待机模式**，无法实时调用大模型为你进行智能思考与个性化回复。
 
 ---
-### 🛠️ 怎么接入 API 开启完整智能私教互动？
+### 🛠️ 怎么接入 API 开启完整智能老师互动？
 1. 点击界面右上角的 **「⚙️ 设置」** 按钮；
 2. 在弹出的设置窗口中切换到 **「AI 大模型接口」** 选项卡；
 3. 选择你偏好的模型提供商（支持 **Google Gemini**、**DeepSeek**、**OpenAI**、**Kimi**、**通义千问** 等）；
@@ -119,25 +241,28 @@ export async function sendChatMessageStream(
       settings.tokenSavingEnabled ? settings.maxHistoryTurns : 20
     );
 
-    const isGemini = settings.provider === 'gemini';
-    const endpoint = isGemini
-      ? '/api/gemini'
-      : settings.baseUrl.endsWith('/')
-        ? `${settings.baseUrl}chat/completions`
-        : `${settings.baseUrl}/chat/completions`;
+    const useLocalGeminiProxy = shouldUseLocalGeminiProxy(settings);
+    const endpoint = resolveApiEndpoint(settings);
 
-    const requestPayload = isGemini
+    // 深度思考：仅在「强制开启」时注入供应商专属参数；off/auto 一律保持请求体原样。
+    // revealReasoning 决定服务端若返回推理内容时是否向上透出（off 时直接丢弃）。
+    const thinkingParams = buildThinkingParams(settings);
+    const revealReasoning = isDeepThinkingEnabled(settings);
+
+    const requestPayload = useLocalGeminiProxy
       ? {
         model: settings.model || 'gemini-3.6-flash',
         messages: optimized.messages,
         systemInstruction: optimized.systemPrompt,
+        ...thinkingParams,
       }
       : {
-        model: settings.model,
+        model: settings.model || (settings.provider === 'gemini' ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
         messages: optimized.messages,
         temperature: settings.temperature,
         stream: true,
         stream_options: { include_usage: true },
+        ...thinkingParams,
       };
 
     // Log the initiation of the chat request to Debug Logger
@@ -157,8 +282,8 @@ export async function sendChatMessageStream(
       rawRequestBody: requestPayload,
     });
 
-    // Gemini provider: use high-speed local proxy with Clash tunnel support
-    if (isGemini) {
+    // Gemini provider: use high-speed local proxy with Clash tunnel support (PC browser only)
+    if (useLocalGeminiProxy) {
       let timedOut = false;
       const timeoutId = setTimeout(() => {
         timedOut = true;
@@ -181,6 +306,12 @@ export async function sendChatMessageStream(
 
         if (!result.success) {
           throw new Error(result.error || 'Gemini API 请求失败');
+        }
+
+        // 深度思考：本地代理会把 Gemini 的 thought 分片单独回传为 reasoning 字段
+        const reasoningText = typeof result.reasoning === 'string' ? result.reasoning.trim() : '';
+        if (revealReasoning && reasoningText) {
+          callbacks.onReasoning?.(reasoningText);
         }
 
         const fullText = sanitizeActionDescriptions(result.text || '');
@@ -238,36 +369,58 @@ export async function sendChatMessageStream(
     let accumulatedText = '';
     let streamUsage: any = null;
 
+    // SSE 逐行解析缓冲：网络分片可能把一行 JSON 切成两半，
+    // 直接对 chunk 做 split('\n') 会把残缺帧静默吞掉（正文偶发丢字，推理链更明显）。
+    // 把最后一段不完整的行留到下一轮拼接，才能真正做到逐字不丢。
+    let sseBuffer = '';
+
+    const consumeSseLine = (line: string) => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data: ') || trimmed === 'data: [DONE]') return;
+
+      let data: any;
+      try {
+        data = JSON.parse(trimmed.replace('data: ', ''));
+      } catch {
+        return; // 仍可能是残缺帧，跳过
+      }
+
+      // 兼容不同厂商返回 usage 的位置：顶层 data.usage 或 data.choices[0].usage
+      if (data.usage) {
+        streamUsage = data.usage;
+      } else if (data.choices?.[0]?.usage) {
+        streamUsage = data.choices[0].usage;
+      }
+
+      const delta = data.choices?.[0]?.delta;
+      if (!delta) return;
+
+      // 推理内容字段名各家不一：DeepSeek / Qwen / SiliconFlow 用 reasoning_content，
+      // Ollama 与部分网关用 reasoning，另有网关用 thinking。
+      const rawReasoning = delta.reasoning_content ?? delta.reasoning ?? delta.thinking;
+      if (revealReasoning && typeof rawReasoning === 'string' && rawReasoning) {
+        callbacks.onReasoning?.(rawReasoning);
+      }
+
+      const content = typeof delta.content === 'string' ? delta.content : '';
+      if (content) {
+        accumulatedText += content;
+        debugLogger.appendChunk(activeRequestId, content);
+        callbacks.onChunk(content);
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
 
-      const chunk = decoder.decode(value, { stream: true });
-      const lines = chunk.split('\n');
-
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('data: ') && trimmed !== 'data: [DONE]') {
-          try {
-            const data = JSON.parse(trimmed.replace('data: ', ''));
-            // 兼容不同厂商返回 usage 的位置：顶层 data.usage 或 data.choices[0].usage
-            if (data.usage) {
-              streamUsage = data.usage;
-            } else if (data.choices?.[0]?.usage) {
-              streamUsage = data.choices[0].usage;
-            }
-            const content = data.choices?.[0]?.delta?.content || '';
-            if (content) {
-              accumulatedText += content;
-              debugLogger.appendChunk(activeRequestId, content);
-              callbacks.onChunk(content);
-            }
-          } catch {
-            // Ignore parse errors on partial frames
-          }
-        }
-      }
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split('\n');
+      sseBuffer = lines.pop() ?? ''; // 末段可能不完整，留到下一轮再拼
+      for (const line of lines) consumeSseLine(line);
     }
+    // 收尾：冲掉缓冲区里可能残留的最后一帧
+    if (sseBuffer.trim()) consumeSseLine(sseBuffer);
 
     const sanitizedAccumulated = sanitizeActionDescriptions(accumulatedText);
     const realPrompt = typeof streamUsage?.prompt_tokens === 'number' ? streamUsage.prompt_tokens : undefined;
@@ -292,8 +445,14 @@ export async function sendChatMessageStream(
       // 用户主动停止生成：不做错误日志，交由调用方处理
       callbacks.onError(err instanceof Error ? err : new Error(String(err)));
     } else {
-      debugLogger.errorChatRequest(activeRequestId, err?.message || String(err));
-      callbacks.onError(err instanceof Error ? err : new Error(String(err)));
+      let errorMsg = err?.message || String(err);
+      if (settings.provider === 'gemini' && !shouldUseLocalGeminiProxy(settings)) {
+        if (/Failed to fetch|NetworkError|Load failed|timeout|ERR_CONNECTION|aborted/i.test(errorMsg)) {
+          errorMsg = `【连接提示】无法连接至 Google Gemini 官方服务（${errorMsg}）。移动端无法直接访问 PC 本地代理端口，请确认手机已开启网络代理工具，或在「设置」中将 Base URL 设为可用的 Gemini 反代地址。`;
+        }
+      }
+      debugLogger.errorChatRequest(activeRequestId, errorMsg);
+      callbacks.onError(err instanceof Error ? err : new Error(errorMsg));
     }
   }
 }
@@ -324,12 +483,8 @@ export async function generateUpdatedPlan(
   }
 
   const startTime = Date.now();
-  const isGemini = settings.provider === 'gemini';
-  const endpoint = isGemini
-    ? '/api/gemini'
-    : settings.baseUrl.endsWith('/')
-      ? `${settings.baseUrl}chat/completions`
-      : `${settings.baseUrl}/chat/completions`;
+  const useLocalGeminiProxy = shouldUseLocalGeminiProxy(settings);
+  const endpoint = resolveApiEndpoint(settings);
 
   try {
     const prompt = `根据学生档案（水平：${profile.level}，已掌握：${profile.masteredGrammar.join(',')}，薄弱项：${profile.weakPoints.join(',')}），请生成一份结构化学习计划 JSON。
@@ -346,7 +501,7 @@ export async function generateUpdatedPlan(
 }`;
 
     let resultText = '';
-    if (isGemini) {
+    if (useLocalGeminiProxy) {
       const response = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -370,7 +525,7 @@ export async function generateUpdatedPlan(
           Authorization: `Bearer ${settings.apiKey.trim()}`,
         },
         body: JSON.stringify({
-          model: settings.model,
+          model: settings.model || (settings.provider === 'gemini' ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.3,
         }),
@@ -388,7 +543,7 @@ export async function generateUpdatedPlan(
       type: 'plan',
       title: `生成 ${profile.level} 动态学习计划`,
       provider: settings.provider,
-      model: settings.model || (isGemini ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
+      model: settings.model || (settings.provider === 'gemini' ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
       endpoint,
       prompt,
       rawOutput: resultText,
@@ -488,45 +643,15 @@ function simulateStreamingResponse(
 }
 
 /**
- * 清洗并校验 AI 返回的逐词注音串（短语/句型/整句标题专用）。
+ * 把 AI 返回的日文片段（例句 / 成分拆解）统一收敛成"可渲染的注音串"：
+ * 带规范注音块时保留注音串（供界面渲染振假名），否则抹掉残留系统标记只留纯文本。
  *
- * 软件统一注音语法：`{原文[读音]}` —— 花括号圈定注音作用的原文范围，方括号内为该段读音。
- * 此处做程序化兜底（不依赖模型自觉）：
- * 1. 剥除 Markdown 代码块围栏与换行，保持单行（标题排版需要）；
- * 2. 逐块重写为规范形式 `{原文[读音]}`；
- * 3. 纯假名 / 片假名外来语（无汉字）一律丢弃注音块只留原文——所见即所读，注音只会干扰排版；
- * 4. 读音与原文相同时同样降级为纯文本；
- * 5. 残留的不成对花括号直接剥除，避免渲染层泄漏系统标记。
- * 若清洗后不含任何有效注音块，则返回 undefined（调用方退化为"原文 + 独立读音行"）。
+ * 词典小窗的例句与 breakdown 片段同样由模型按注音语法书写，绝不能让 `{` `}` `[` `]`
+ * 直接暴露给用户，也绝不能让括号内的读音混进正文。
  */
-export function sanitizeAnnotatedText(raw: unknown): string | undefined {
-  if (typeof raw !== 'string') return undefined;
-  const src = raw.replace(/```[a-zA-Z]*/g, '').replace(/[\r\n]+/g, '').trim();
-  if (!src) return undefined;
-
-  const blockRe = /\{\s*([^{}[\]]+?)\s*\[\s*([^\]{}]+?)\s*\]\s*\}/g;
-  let out = '';
-  let cursor = 0;
-  let hasValidBlock = false;
-  let m: RegExpExecArray | null;
-
-  while ((m = blockRe.exec(src)) !== null) {
-    // 块外的裸花括号一律剥除（系统的宿主边界标记绝不能泄漏到界面）
-    out += src.slice(cursor, m.index).replace(/[{}｛｝]/g, '');
-    const host = m[1].trim();
-    const reading = m[2].trim();
-    // 纯假名 / 片假名外来语（无汉字）与"读音即原文"的块没有注音价值：降级为纯文本
-    const keep = !!host && !!reading && /[一-龯々〆]/.test(host) && reading !== host;
-    out += keep ? `{${host}[${reading}]}` : host;
-    if (keep) hasValidBlock = true;
-    cursor = m.index + m[0].length;
-  }
-  out += src.slice(cursor).replace(/[{}｛｝]/g, '');
-  out = out.trim();
-
-  // 清洗后必须至少留下一个有效注音块，否则调用方退化为"原文 + 独立读音行"
-  if (!hasValidBlock || !out || out.length > 400) return undefined;
-  return out;
+function toRenderableJpField(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  return sanitizeAnnotatedText(raw) ?? stripAnnotatedBlockMarks(raw);
 }
 
 /**
@@ -548,7 +673,7 @@ export async function queryWordDefinitionFromLLM(
   meaning: string;
   detail?: string;
   breakdown?: Array<{ jp: string; zh?: string; role?: string }>;
-  /** 逐词注音串（软件统一 `{原文[读音]}` 语法），仅 phrase / grammar / sentence 返回 */
+  /** 带注音的标题串（软件统一 `{原文[读音]}` 语法）：由 AI 返回的 "word" 字段解析而来，各类型都会有 */
   annotated?: string;
   examples?: Array<{ jp: string; zh: string }>;
   queryType?: 'word' | 'phrase' | 'grammar' | 'sentence';
@@ -587,7 +712,7 @@ export async function queryWordDefinitionFromLLM(
   if (isChineseQuery) {
     prompt = `你是一部权威专业的中日·日汉双解词典与专业日语翻译专家。
 用户输入了中文内容「${cleanWord}」，需要查询其对应的最地道、标准的日文表达与专业解析。
-${contextOptions?.sentenceContext ? `所在上下文环境：「${contextOptions.sentenceContext}」` : ''}
+${contextOptions?.sentenceContext ? `所在上下文环境参考（仅辅助理解原意，必须严格针对「${cleanWord}」本身进行翻译）：「${contextOptions.sentenceContext}」` : ''}
 
 第一步，判定语言范畴（queryType）：
    - 单词（word）：单个字词（如：迟到 → 遅刻，手机 → スマホ，高兴 → 嬉しい）。
@@ -605,20 +730,19 @@ ${contextOptions?.sentenceContext ? `所在上下文环境：「${contextOptions
 
 【硬性约束】
 - "word" 必须是地道的【日文表达】（标准日文汉字或假名），绝不能原样输出中文词句。
-- "reading" 必须是该日文表达对应的纯平假名读音（整句请给出全句假名朗读）。
+- "word" 必须自带注音：所有类型（单词 / 词组 / 句型 / 句子）都用本软件统一语法 {汉字[读音]} 标注汉字读音。
+  例："word": "{疲[つか]}れる"、"{図書館[としょかん]}で{本[ほん]}を{読[よ]}みます"。
+  * 一个花括号只圈【一个词】里的汉字部分，严禁把跨助词的一整串圈进同一块；
+  * 送假名（れる / ます / しい 等）与助词（は/が/を/に/で/と/へ/も/の 等）一律写在花括号【外】，直接写原文；
+  * 纯假名词与片假名外来语（如 コーヒー、これ）不圈块，直接写原文——它们所见即所读，注音会被系统丢弃；
+  * 块内读音必须只是所圈汉字的真实读音，不含送假名（{読[よ]}みます 而非 {読みます[よみます]}）；
+  * 【务必圈全】本软件直接由花括号反推整段读音，故每一个汉字都必须圈注，漏注即该处读音彻底丢失。
 - "originalQuery" 原样填写用户的中文输入「${cleanWord}」。
 - breakdown 仅在 phrase / grammar / sentence 时输出，word 时请省略该字段。
-- 仅 phrase / grammar / sentence 额外输出 "annotated"：把上面的日文表达按【词】逐词标注读音，格式为 {原文[读音]}（例：{図書館[としょかん]}で{本[ほん]}を{読[よ]}みます）。
-  * 一个花括号只圈【一个词】，严禁把跨助词的一整串圈进同一块；
-  * 助词（は/が/を/に/で/と/へ/も/の 等）一律不圈、直接写原文；
-  * 纯假名词与片假名外来语（如 コーヒー、これ）不圈块，直接写原文——它们所见即所读，注音会被系统丢弃；
-  * 块内读音必须只是所圈汉字的真实读音，不含送假名（{読[よ]}みます 而非 {読みます[よみます]}）。
 - 严格输出标准 JSON，禁止任何 Markdown 代码块包裹或任何解释文字：
 {
   "queryType": "word | phrase | grammar | sentence",
-  "word": "转换后的地道日文表达（必须为日文，绝不能保留中文原词）",
-  "reading": "该日文表达的平假名读音（整句为全句假名）",
-  "annotated": "仅 phrase/grammar/sentence：逐词注音串，格式 {原文[读音]}；word 请省略此字段",
+  "word": "带注音的日文表达，汉字用 {汉字[读音]} 标注（如 {疲[つか]}れる）",
   "originalQuery": "${cleanWord}",
   "pitch": 0,
   "pos": "词性或类型（如 名词 / 惯用句 / 语法句型 / 句子表达 等）",
@@ -634,15 +758,16 @@ ${contextOptions?.sentenceContext ? `所在上下文环境：「${contextOptions
 }`;
   } else {
     prompt = `你是一部权威专业的日语语言智能解析专家与现代日汉双解词典。
-请深度解析用户划选查询的日语内容：「${cleanWord}」（假名读音若已知：${reading || '请根据上下文推导'}）。
+请深度解析用户实际选中的日语内容：「${cleanWord}」（假名读音若已知：${reading || '请根据上下文推导'}）。
 ${contextOptions?.originalQuery ? `注意：用户原始查询片段为「${contextOptions.originalQuery}」。` : ''}
-${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextOptions.sentenceContext}」` : ''}
+${contextOptions?.sentenceContext ? `所在上下文环境参考（仅用于辅助确定当前词义，禁止替代查询目标）：「${contextOptions.sentenceContext}」` : ''}
 
 核心要求（极其严格）：
+0. 【聚焦实际查询内容，严禁过度参考上下文】：用户实际查询与选中的唯一目标是「${cleanWord}」，你必须严格且仅针对该选定内容本身进行词典解析！严禁喧宾夺主地将外部未选中的整句翻译或整句含义作为释义（meaning），绝不要越界发散到未选中的上下文！
 1. 首先智能判定查询内容的语言范畴（queryType），再按范畴输出【相配的结构与深度】——绝不千篇一律：
    - 单词（word）：独立单个词汇或动词/形容词活用形（如「食べる」「綺麗」「昨日」「美味しそう」）。
      * 若仅为短小单字附带了无意义的单个粘连助词（如「に行」），请剥离助词还原辞书形原型「行く」，并在 detail 中说明「由助词『に』+ 动词『行く』构成」。
-     * "word" 输出规范辞书形原型，"reading" 填平假名，"pitch" 给标准声调核（0=平板，1=头高，≥2=中高/尾高），"pos" 给精准词性，"level" 给 JLPT 等级。请省略 breakdown。
+     * "word" 输出规范辞书形原型（自带 {汉字[读音]} 注音），"pitch" 给标准声调核（0=平板，1=头高，≥2=中高/尾高），"pos" 给精准词性，"level" 给 JLPT 等级。请省略 breakdown。
    - 词组/惯用语（phrase）：多词构成的固定搭配、连语、惯用句或熟语（如「気がする」「気をつける」「足元を見る」「一目惚れ」）。
      * 【极其重要】：必须保持完整短语词组本身（"word": "${cleanWord}"），绝对不要拆解或强行降维为单个字！"pos" 标「惯用句」「连语」「固定词组」等。
      * "meaning" 给出该词组地道贴切的引申义与核心中文释义。
@@ -656,7 +781,7 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
      * "detail" 详细说明：①接续方式；②语气特征与核心用法点拨；③易混淆点。
      * "examples" 提供 2 个生动实用的造句例句。
    - 句子/表达（sentence）：完整主谓或谓语动作的句子、短句或日常交际会话（如「図書館で本を読みます」「天気がいいですね」「お腹が空いた」「マジで？」）。
-     * "word" 保持该完整句子原样；"reading" 填写该句子的全假名朗读注音；"pos" 标「句子表达」「日常会话句」等。
+     * "word" 保持该完整句子原样（逐词注音）；"pos" 标「句子表达」「日常会话句」等。
      * "meaning" 必须是自然流畅、贴切地道的【完整中文翻译】（不要逐字直译、不要只译片段）。
      * "breakdown" 必须逐块拆解句子成分（日文片段 + 中文含义 + role 如 主语/地点状语/宾语/谓语），按语序排列并覆盖全句。
      * "detail" 概括整句语气、时态与使用场景，并点出 1~2 个关键语法点。
@@ -664,16 +789,17 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
      * 句子请省略 pitch 与 level 字段。
 
 2. breakdown 仅在 phrase / grammar / sentence 时输出，word 时请省略该字段。
-3. 仅 phrase / grammar / sentence 额外输出 "annotated"：把上述日文表达按【词】逐词标注读音，格式为 {原文[读音]}（例：{図書館[としょかん]}で{本[ほん]}を{読[よ]}みます）。
-   * 一个花括号只圈【一个词】，严禁把跨助词的一整串圈进同一块；助词（は/が/を/に/で/と/へ/も/の 等）一律不圈、直接写原文；
+3. "word" 必须自带注音：所有类型（单词 / 词组 / 句型 / 句子）都用软件统一语法 {汉字[读音]} 标注汉字读音。
+   例："word": "{疲[つか]}れる"、"{図書館[としょかん]}で{本[ほん]}を{読[よ]}みます"。
+   * 一个花括号只圈【一个词】里的汉字部分，严禁把跨助词的一整串圈进同一块；
+   * 送假名（れる / ます / しい 等）与助词（は/が/を/に/で/と/へ/も/の 等）一律写在花括号【外】，直接写原文；
    * 纯假名词与片假名外来语（如 コーヒー、これ）不圈块，直接写原文——它们所见即所读，注音会被系统丢弃；
    * 块内读音必须只是所圈汉字的真实读音，不含送假名（{読[よ]}みます 而非 {読みます[よみます]}）。
+   * 【务必圈全】本软件直接由花括号反推整段读音，故每一个汉字都必须圈注，漏注即该处读音彻底丢失。
 4. 严格输出标准 JSON 格式，禁止任何 Markdown 代码块包裹或解释：
 {
   "queryType": "word | phrase | grammar | sentence",
-  "word": "规范词条/短语/句型/原句",
-  "reading": "对应的假名注音读音（整句为全句假名）",
-  "annotated": "仅 phrase/grammar/sentence：逐词注音串，格式 {原文[读音]}；word 请省略此字段",
+  "word": "规范词条/短语/句型/原句，汉字用 {汉字[读音]} 标注（如 {疲[つか]}れる）",
   "originalQuery": "${contextOptions?.originalQuery || cleanWord}",
   "pitch": 0,
   "pos": "词性或语法分类（如 他动词·一段 / 惯用句 / 语法句型·N2 / 句子表达 等）",
@@ -690,16 +816,12 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
   }
 
   const startTime = Date.now();
-  const isGemini = finalSettings.provider === 'gemini';
-  const endpoint = isGemini
-    ? '/api/gemini'
-    : finalSettings.baseUrl.endsWith('/')
-      ? `${finalSettings.baseUrl}chat/completions`
-      : `${finalSettings.baseUrl}/chat/completions`;
+  const useLocalGeminiProxy = shouldUseLocalGeminiProxy(finalSettings);
+  const endpoint = resolveApiEndpoint(finalSettings);
 
   try {
     let rawText = '';
-    if (isGemini) {
+    if (useLocalGeminiProxy) {
       const response = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -723,7 +845,7 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
           Authorization: `Bearer ${finalSettings.apiKey.trim()}`,
         },
         body: JSON.stringify({
-          model: finalSettings.model || 'gpt-4o-mini',
+          model: finalSettings.model || (finalSettings.provider === 'gemini' ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.2,
         }),
@@ -738,7 +860,7 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
       type: 'dictionary',
       title: `AI 权威查词: ${cleanWord}`,
       provider: finalSettings.provider,
-      model: finalSettings.model || (isGemini ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
+      model: finalSettings.model || (finalSettings.provider === 'gemini' ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
       endpoint,
       prompt,
       rawOutput: rawText,
@@ -767,8 +889,24 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
       return null;
     }
 
-    const resultWord = parsed.word?.trim() || cleanWord;
-    const resultReading = parsed.reading?.trim() || reading || resultWord;
+    // "word" 自带注音（`{原文[读音]}`）：先还原出纯文本词形，再清洗出规范注音串。
+    // 纯文本词形才是词条身份（生词本词形、DICT_BY_WORD key、朗读文本），绝不允许块标记泄漏出去。
+    const rawWord = typeof parsed.word === 'string' ? parsed.word.trim() : '';
+    const resultWord = (rawWord ? stripAnnotatedBlockMarks(rawWord) : '') || cleanWord;
+
+    // 读音不再要求模型单独输出：注音块本身已完整承载读音，直接反推即可
+    //（块内取读音、块外照抄送假名与助词），从根上消灭 word 与 reading 互相矛盾的破绽。
+    // 注意用未清洗的 rawWord 反推：清洗会把「无注音价值的块」降级为纯文本，而 コーヒー
+    // 这类外来语的读音恰恰就是它自己，不能被清掉。
+    const sanitizedWordAnnotated = sanitizeAnnotatedText(rawWord);
+    const readingFromBlocks = deriveReadingFromAnnotated(rawWord);
+    // 反推结果残留汉字 = 模型漏注（该处读音本就已丢），此时才退回过期契约里的独立 "reading"。
+    // 纯假名 / 片假名外来语没有注音块，反推结果即原文——对它们而言原文正是读音本身。
+    const resultReading =
+      (readingFromBlocks && !/[\u3005\u3400-\u9fff]/.test(readingFromBlocks) ? readingFromBlocks : '') ||
+      (typeof parsed.reading === 'string' ? stripAnnotatedBlockMarks(parsed.reading) : '') ||
+      reading ||
+      resultWord;
 
     const detectedType =
       parsed.queryType === 'phrase' ||
@@ -782,25 +920,39 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
             ? 'phrase'
             : 'word');
 
-    // 成分拆解：仅短语/句型/句子有意义；此处做程序化清洗（丢弃非对象、空片段、超长脏数据）
+    // 成分拆解：仅短语/句型/句子有意义；此处做程序化清洗（丢弃非对象、空片段、超长脏数据）。
+    // 片段同样按注音语法收敛：带 `{原文[读音]}` 的保留注音串供界面渲染振假名，其余抹标记只留纯文本。
     const rawBreakdown = Array.isArray(parsed.breakdown) ? parsed.breakdown : [];
     const breakdown = rawBreakdown
       .filter((seg: any) => seg && typeof seg === 'object' && typeof seg.jp === 'string' && seg.jp.trim())
       .slice(0, 12)
       .map((seg: any) => ({
-        jp: seg.jp.trim().slice(0, 60),
+        jp: toRenderableJpField(seg.jp).slice(0, 60),
         zh: typeof seg.zh === 'string' && seg.zh.trim() ? seg.zh.trim().slice(0, 120) : undefined,
         role: typeof seg.role === 'string' && seg.role.trim() ? seg.role.trim().slice(0, 24) : undefined,
-      }));
+      }))
+      .filter((seg: any) => !!seg.jp);
+
+    // 例句同理：AI 常顺手把例句也写成注音语法，必须在此收敛，否则标记会裸露在词典小窗里
+    const rawExamples = Array.isArray(parsed.examples) ? parsed.examples : [];
+    const examples = rawExamples
+      .filter((ex: any) => ex && typeof ex === 'object' && typeof ex.jp === 'string' && ex.jp.trim())
+      .slice(0, 4)
+      .map((ex: any) => ({
+        jp: toRenderableJpField(ex.jp).slice(0, 160),
+        zh: typeof ex.zh === 'string' ? ex.zh.trim().slice(0, 200) : '',
+      }))
+      .filter((ex: any) => !!ex.jp);
 
     const isWordLike = detectedType === 'word';
     const isSentence = detectedType === 'sentence';
 
-    // 逐词注音串（{原文[读音]}）：仅短语/句型/整句有意义。
-    // 清洗后还需与正文做一致性校验——注音串剥掉标记后必须与正文实质一致，
-    // 否则视为模型串台/漏词，直接丢弃，让界面退化为"原文 + 独立读音行"。
-    const sanitizedAnnotated = isWordLike ? undefined : sanitizeAnnotatedText(parsed.annotated);
-    // 比对前先剥掉 [读音] 内容，只留下"宿主原文"，再抹去花括号与标点等装饰字符
+    // 注音串（`{原文[读音]}`）：现在由 "word" 自己携带——单词类型同样需要，
+    // 词头可直接渲染 AI 给出的权威振假名，不再依赖 splitStemAndOkurigana 猜测汉字/送假名边界。
+    // 兼容旧契约：老缓存或旧模型可能仍把注音放在独立的 "annotated" 字段。
+    const sanitizedAnnotated = sanitizedWordAnnotated ?? sanitizeAnnotatedText(parsed.annotated);
+    // 比对前先剥掉 [读音] 内容，只留下"宿主原文"，再抹去花括号与标点等装饰字符；
+    // 注音串与纯文本词形必须实质一致，否则视为模型串台/漏词，整条丢弃让界面退化兜底。
     const coreChars = (s: string) =>
       s
         .replace(/\[[^\]]*\]/g, '')
@@ -824,7 +976,7 @@ ${contextOptions?.sentenceContext ? `所在上下文完整句子：「${contextO
       detail: parsed.detail || '',
       breakdown: !isWordLike && breakdown.length > 0 ? breakdown : undefined,
       annotated,
-      examples: Array.isArray(parsed.examples) ? parsed.examples : undefined,
+      examples: examples.length > 0 ? examples : undefined,
       queryType: detectedType,
     };
   } catch (err: any) {
@@ -897,10 +1049,13 @@ export async function queryGrammarExplanationFromLLM(
   "exampleCn": "地道准确的中文翻译"
 }`;
 
+  const useLocalGeminiProxy = shouldUseLocalGeminiProxy(finalSettings);
+  const endpoint = resolveApiEndpoint(finalSettings);
+
   try {
     let rawText = '';
-    if (finalSettings.provider === 'gemini') {
-      // 统一走本地代理，避免 Clash 隧道用户直连 Google 失败，行为与查词/会话一致
+    if (useLocalGeminiProxy) {
+      // 仅在 PC 本地开发环境走本地代理，避免 Clash 隧道用户直连 Google 失败
       const response = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -917,7 +1072,6 @@ export async function queryGrammarExplanationFromLLM(
       if (!result.success || !result.text) return null;
       rawText = result.text;
     } else {
-      const endpoint = `${finalSettings.baseUrl.replace(/\/$/, '')}/chat/completions`;
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
@@ -925,7 +1079,7 @@ export async function queryGrammarExplanationFromLLM(
           Authorization: `Bearer ${finalSettings.apiKey.trim()}`,
         },
         body: JSON.stringify({
-          model: finalSettings.model || 'gpt-4o-mini',
+          model: finalSettings.model || (finalSettings.provider === 'gemini' ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.2,
         }),

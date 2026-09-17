@@ -45,7 +45,7 @@ const GENERIC_EXPLANATION_MARKERS = [
   '在对话中表达具体的语境动作',
   '引导分句中的关键动作成分',
   '日语口语中的连贯接续表达',
-  '私教上下文精选表达例句',
+  '老师上下文精选表达例句',
   '特色接续句型',
   '常用语法句型',
 ];
@@ -352,7 +352,7 @@ export function synthesizeGrammarDetails(rawTitle: string, contextSentence?: str
       explanation,
       level: 'N5',
       exampleJp: contextSentence,
-      exampleCn: contextSentence ? '（私教上下文精选表达例句）' : undefined,
+      exampleCn: contextSentence ? '（老师上下文精选表达例句）' : undefined,
       isGeneric: true,
     };
   }
@@ -420,7 +420,7 @@ export function synthesizeGrammarDetails(rawTitle: string, contextSentence?: str
     structure: particle ? `${particleStructurePrefix} + ${particle} + ${remainder}` : `前接词 + ${core}`,
     meaning: particle ? `围绕「${remainder}」的句意表达` : `「${core}」句型表达`,
     explanation: particle
-      ? `包含${particleDesc}，引导分句中的关键动作成分，建议结合私教教学上下文体会其具体交际功用。`
+      ? `包含${particleDesc}，引导分句中的关键动作成分，建议结合老师教学上下文体会其具体交际功用。`
       : `日语口语中的连贯接续表达，用于使语句逻辑自然顺畅。`,
     level: 'N4',
     exampleJp: contextSentence,

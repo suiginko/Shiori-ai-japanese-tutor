@@ -1,4 +1,4 @@
-import { ApiSettings, ChatMessage, ChatSession, CrossSessionMemoryMode, LearnedGrammar, LearnedWord, RoleplayScenario, StudyMode, UserLearningProfile, UserLevel } from '../types';
+import { ApiSettings, ChatMessage, ChatSession, CrossSessionMemoryMode, LearnedGrammar, LearnedWord, Lesson, RoleplayScenario, StudyMode, UserLearningProfile, UserLevel } from '../types';
 import { countTokens } from '../utils/tokenCounter';
 import { detectPendingTask, formatPendingTaskDirective } from '../utils/interactionState';
 import { syncNameRubyFromSettings, stripRubyMarkers, extractFullReading } from '../utils/nameRubyHelper';
@@ -30,9 +30,9 @@ const JP_OUTPUT_CONTRACT = `【唯一硬性输出契约·全程必须遵守】
    - 兼容：旧式紧贴写法 \`野菜[やさい]\`（无花括号）系统仅为兼容旧内容仍可识别，【新输出一律使用花括号块】。`;
 
 /**
- * 随堂语法精讲块：让私教在【真正讲解/纠正句型】时显式声明一个可复用语法点。
- * 这是「学情档案 · 句型语法」页的唯一高质量来源——离线正则只能判断"出现过"，
- * 无法判断"讲过"，所以采集必须由私教亲自声明。块体对界面完全不可见（统一 ::: 系系统块）。
+ * 随堂语法精讲块：让老师在【真正讲解/纠正句型】时显式声明一个可复用语法点。
+ * 这是「笔记本 · 句型语法」页的唯一高质量来源——离线正则只能判断"出现过"，
+ * 无法判断"讲过"，所以采集必须由老师亲自声明。块体对界面完全不可见（统一 ::: 系系统块）。
  */
 const GRAMMAR_BLOCK_CONTRACT = `【随堂语法精讲块（界面不可见）】
 只有当你【主动讲解 / 重点点拨 / 纠正】了一个可复用句型时才在回复末尾输出，每轮最多一个；只是自然用到而没讲解就不要输出（否则会污染学生档案）：
@@ -46,6 +46,111 @@ example: <jp>日本料理を作ってみました。</jp>
 exampleCn: 我试着做了日本料理。
 :::
 point 写「～ + 接续部位」的句型写法（如 ～てください），不写具体句子；note 用一两句中文点明语感差异、使用场景或易错点（学生最需要这部分，切勿敷衍）；level 不确定可省略该行；行文提到该句型时用波浪线引号标注（如「～てみる」）便于学生识别。`;
+
+/**
+ * 备课教材块契约（`:::lesson`）。
+ *
+ * 为什么不干脆用 JSON：JSON 需要额外转义才能安全容纳 `<jp>` 契约和花括号注音，
+ * 模型极易写坏（漏转义、把注音写进字符串边界外）。块语法则天然复用既有的
+ * 剥离 / 渲染 / 朗读 / 划词查词 / 收藏链路，解析器只需一组键值行。
+ */
+export const LESSON_BLOCK_CONTRACT = `【备课教材块（:::lesson，原始块体界面不可见）】
+把教材写进下面这个块里——**块外不要写任何话**：备课是老师的幕后工作，学生看不到备课过程，只有块体内容会被系统读取并渲染成课件：
+
+:::lesson
+title: 中文课名
+titleJp: <jp>日文课名</jp>
+goal: 可验证的课时目标（能独立完成什么，不写"掌握…知识"）
+focus: shopping | travel | business | anime | daily | foundation
+scenario: 中文情景名
+roleAi: 你在此情景中扮演谁（带上语气特征）
+roleUser: 学生扮演谁
+opening: <jp>你在情景里的第一句台词</jp>
+sgoal: 学生必须亲口说出来才算达成的目标（可多条）
+script: T|<jp>你的台词</jp>|中文翻译|旁注可省略
+script: S|<jp>学生该说的示范台词</jp>|中文翻译|
+point: 文化 / 语用 / 声调点拨（可多条）
+:::
+
+硬性要求：
+1. script 是【情境脚本】，不是课文：3~5 个来回，T = 你（按角色人设说话），S = 学生；每句都要 <jp> 包裹并给中文翻译，允许用（神态/动作）灰色小括号旁白。
+2. 【只许用上面给定的新词、复习词与句型】，严禁引入词表之外的新知识点；给定句型必须原样出现在脚本里。
+3. 人格只影响台词语气与措辞。词义、读音、声调、词性、语法接续、JLPT 等级一律照抄给定数据，不得改写、不得戏说、不得为了演戏故意用错。
+4. 注音只在【特殊读法】时才用花括号块 {原文[读音]}，一个花括号只圈一个词；纯假名与片假名外来语禁止圈块。
+5. sgoal 写成"学生要说出什么"，不要写成"学生要掌握什么"。
+6. 块内一行一个字段、不要留空行，块结尾用单独一行 ::: 收束。`;
+
+/**
+ * 备课指令（A 段骨架 → B 段教材）。
+ *
+ * 关键点：词表与句型表由本地排课器定死，模型只能填"教材正文"。
+ * 若让模型自己选词，它会给出与本地学情档案无关的清单——旧实现正是如此
+ * （备课 prompt 只带了 `profile.level` + 手工维护的字符串数组）。
+ */
+export function buildLessonPrepBrief(args: {
+  lesson: Lesson;
+  profile: UserLearningProfile;
+  settings?: ApiSettings;
+  learnedWordCount?: number;
+  learnedGrammarCount?: number;
+}): string {
+  const { lesson, profile, settings } = args;
+  const tutorName = settings?.aiTutorName?.trim() || 'Shiori AI';
+  const userName = settings?.userName?.trim() || '学习者';
+  const persona = settings?.aiPersona?.trim() || '亲切温柔的AI日语老师';
+  const selfJp = settings?.aiFirstPersonJp?.trim() || '私[わたし]';
+  const callJp = settings?.userCallNameJp?.trim() || `${stripRubyMarkers(userName) || userName}さん`;
+  const goalLabel = profile.goal || 'jlpt';
+
+  if (lesson.focus === 'kana') {
+    const kana = lesson.items.script?.[0]?.jp || '';
+    return `你现在是【${tutorName}】，请你亲自为你的学生【${userName}】备一节【五十音阶梯课】。
+学生当前水平：${profile.level}（${profile.levelLabel}），学习目标取向：${goalLabel}。
+你的人格设定：${persona}。你的日文自称：${selfJp}；对学生的称呼：${callJp}。
+
+本课要教的假名【已由教材模块确定，不得增删改】：${kana.split('').join('、')}
+
+要求：
+1. 不要给假名编造"记忆法"或读音规则，这些已在教材数据里；你的任务是设计【怎么带学生练会这 5 个假名】。
+2. script 里用 T 行写下你要学生跟读的假名组合（可用各 2~3 个假名的无意义组合，如「あか」「さた」），S 行是学生该跟着念的内容。
+3. 用中文讲清发音口型要点与最容易和汉语混淆的地方。
+4. 只输出教材块本身，块外不要写任何说明（备课过程学生看不到）。
+
+${LESSON_BLOCK_CONTRACT}`;
+  }
+
+  const newWords = lesson.items.words.filter((w) => w.isNew);
+  const reviewWords = lesson.items.words.filter((w) => !w.isNew);
+  const grammars = lesson.items.grammars;
+
+  const wordLines = newWords
+    .map((w) => `  - ${w.surface}（${w.reading || '—'}）/ ${w.pos || '—'} / ${w.level || '—'} / ${w.meaning || '—'}`)
+    .join('\n');
+  const reviewLines = reviewWords.map((w) => `  - ${w.surface}（${w.reading || '—'}）${w.reason ? ` ← ${w.reason}` : ''}`).join('\n');
+  const grammarLines = grammars
+    .map((g) => `  - ${g.title}【${g.structure || '—'}】＝ ${g.meaning || '—'}${g.level ? `（${g.level}）` : ''}`)
+    .join('\n');
+
+  return `你现在是【${tutorName}】，请你亲自为你的学生【${userName}】备一节日语课。
+学生当前水平：${profile.level}（${profile.levelLabel}）；学习目标取向：${goalLabel}。
+已收录生词 ${args.learnedWordCount ?? 0} 个、句型 ${args.learnedGrammarCount ?? 0} 个。
+你的人格设定：${persona}；日文自称：${selfJp}；对学生的称呼：${callJp}。台词的语气与措辞要符合这个人格。
+
+本课的骨架【已由本地排课器依据学情确定，你必须原样使用，不得增删改】：
+课名：${lesson.title}
+课时目标：${lesson.goal}
+训练重心：${lesson.focus}
+本课新词（只准用这些当新词讲，词义/读音/词性照抄）：
+${wordLines || '  （本课无新词）'}
+本课复习词（只做唤起与运用，不要再当新词讲解）：
+${reviewLines || '  （无）'}
+本课句型（只准用这些，接续与释义照抄）：
+${grammarLines || '  （无句型）'}
+
+你的任务是把这些既定的知识点【编成一段可照着演的情境脚本】，并给出真实可用的点拨与验收目标。
+
+${LESSON_BLOCK_CONTRACT}`;
+}
 
 export function getStageLanguageDensityInstruction(level: UserLevel): string {
   switch (level) {
@@ -144,7 +249,7 @@ export function extractSessionCapsules(
       const aText = cleanText(lastAi.content);
       const uShort = uText.length > 25 ? uText.substring(0, 25) + '…' : uText;
       const aShort = aText.length > 35 ? aText.substring(0, 35) + '…' : aText;
-      snippet = `曾探讨“${uShort}”，私教重点示范了“${aShort}”`;
+      snippet = `曾探讨“${uShort}”，老师重点示范了“${aShort}”`;
     } else if (lastAi) {
       const aText = cleanText(lastAi.content);
       snippet = aText.length > 40 ? aText.substring(0, 40) + '…' : aText;
@@ -157,9 +262,9 @@ export function extractSessionCapsules(
 
   if (capsules.length === 0) return '';
 
-  return `\n\n【学生以往各堂课里程碑（跨会话长期记忆，仅消耗极少Token提供连续私教体验）】\n` +
+  return `\n\n【学生以往各堂课里程碑（跨会话长期记忆，仅消耗极少Token提供连续教学体验）】\n` +
     capsules.join('\n') +
-    `\n※ 私教关怀指引：若情境适宜（如开场承前启后、温习或造句鼓励），可自然提及上述共同学习经历（如“上次在「${otherSessions[0]?.title}」里我们练过…，今天接着…”），让学生感受到真实专属私教的陪伴与连贯性，切忌刻意生硬堆砌。`;
+    `\n※ 老师关怀指引：若情境适宜（如开场承前启后、温习或造句鼓励），可自然提及上述共同学习经历（如“上次在「${otherSessions[0]?.title}」里我们练过…，今天接着…”），让学生感受到真实专属老师的陪伴与连贯性，切忌刻意生硬堆砌。`;
 }
 
 export function extractPrioritizedKnowledge(
@@ -186,10 +291,18 @@ export function extractPrioritizedKnowledge(
 
   const metricsLine = `【学情宏观画像】词汇库累计 ${totalWords} 词（🌱初学阶段 ${pureLearningWords.length} 词，🔄温习巩固 ${reviewingWords.length} 词，⭐已熟练掌握 ${masteredWords.length} 词）；句型语法 ${grammars.length} 项（已掌握 ${masteredGrammars.length} 项，温习 ${reviewingGrammars.length} 项，初学 ${pureLearningGrammars.length} 项）。`;
 
-  // 1. 重点温习靶标词（根据复习次数和时间加权提取，优先在当前对话中引导实战）
+  // 1. 重点温习靶标词（根据测验次数与被动遇见次数加权提取，优先在当前对话中引导实战）
+  //
+  // 为什么要把 exposureCount 也算进来：只按 reviewCount 排会漏掉最该被考的那批词——
+  // "在对话里反复碰到、却从没被真正测验过"的词（reviewCount 低、exposureCount 高）。
   const reviewLimit = mode === 'deep' ? 10 : 6;
   const topReviewing = [...reviewingWords]
-    .sort((a, b) => (b.reviewCount || 0) - (a.reviewCount || 0) || (b.learnedAt || 0) - (a.learnedAt || 0))
+    .sort(
+      (a, b) =>
+        ((b.reviewCount || 0) * 2 + (b.exposureCount || 0)) -
+          ((a.reviewCount || 0) * 2 + (a.exposureCount || 0)) ||
+        (b.learnedAt || 0) - (a.learnedAt || 0)
+    )
     .slice(0, reviewLimit)
     .map((w) => `${w.surface}（${w.reading}${w.meaning ? `：${w.meaning.slice(0, 15)}` : ''}）`);
 
@@ -233,7 +346,7 @@ export function extractPrioritizedKnowledge(
 
   if (topLearning.length > 0) {
     sections.push(`- 【🌱 近期初学收录词（已存入生词本但记忆尚浅）】：${topLearning.join('、')}
-  ※ 私教应对指令：学生已初步查阅收录，但在运用时可能不够熟练。对话涉及这些词时自然附带假名或中文释义，温柔引导，切勿当成从未学过的新词介绍。`);
+  ※ 老师应对指令：学生已初步查阅收录，但在运用时可能不够熟练。对话涉及这些词时自然附带假名或中文释义，温柔引导，切勿当成从未学过的新词介绍。`);
   }
 
   if (triggeredWords.length > 0) {
@@ -249,12 +362,91 @@ export function extractPrioritizedKnowledge(
   }
 
   sections.push(
-    `【学情教学与私教情感准则】：` +
+    `【学情教学与老师情感准则】：` +
     `\n1. 敏锐洞察成长：当学生在回答或造句中成功运用了上述学过的词汇或语法时，真诚给予热烈肯定称赞，让学生深切体会到掌握日语的喜悦！` +
     `\n2. 面对卡壳与错误：以温柔耐心的态度引导，多用鼓励性语言化解焦虑，做学生最坚实、懂关怀的学习伙伴。`
   );
 
   return '\n\n' + sections.join('\n');
+}
+
+/**
+ * 情景演练设定注入。
+ *
+ * 历史遗留问题：`buildSystemPrompt(mode, profile, scenario, …)` 的 `mode` 与 `scenario`
+ * 两个形参此前【函数体内零引用】，场景的 roleAi / roleUser / goals / usefulPhrases 从未
+ * 进入系统提示词——模型只能靠会话第一句话反推"我在演谁、目标是什么"，这是沉浸感的上限。
+ * 本函数把场景设定显式注入，并把 goals 声明为"只有学生真的说出才算达成"的验收契约。
+ */
+export function buildScenarioSection(
+  scenario: RoleplayScenario,
+  mode: StudyMode,
+  settings?: ApiSettings
+): string {
+  const userName = settings?.userName?.trim() || '学习者';
+  const userCallJp = settings?.userCallNameJp?.trim() || `${stripRubyMarkers(userName) || userName}さん`;
+  const phrasing = settings?.aiFirstPersonJp?.trim() || '私[わたし]';
+
+  const goalLines = (scenario.goals || [])
+    .map((g, i) => `  ${i + 1}. ${g.description}${g.completed ? '（系统记录：已达成）' : ''}`)
+    .join('\n');
+
+  const phraseLines = (scenario.usefulPhrases || [])
+    .map((p) => `  - <jp>${p.jp}</jp>（${p.kana}）→ ${p.cn}`)
+    .join('\n');
+
+  const modeLine = mode === 'roleplay'
+    ? '本会话即为情景演练会话，从第一条回复起就必须完全进入角色。'
+    : '若学生主动把话题引向本情景，按下列设定无缝切换进入角色。';
+
+  return `【情景演练设定（严格执行，勿脱离角色）】
+情景：${scenario.title}（<jp>${stripRubyMarkers(scenario.titleJp)}</jp>）— ${scenario.description}
+你扮演：${scenario.roleAi}
+学生扮演：${scenario.roleUser}
+开场情境：<jp>${stripRubyMarkers(scenario.initialMessage)}</jp>
+${modeLine}
+
+【必须由学生亲口达成的演练目标】只有学生【自己的发言】真的完成了某条目标才算达成；学生仅仅附和、只回「はい」或由你代替他说出，一律【不算达成】，不得判定过关：
+${goalLines || '  （本情景未预设目标，以自然推进对话为目的）'}
+
+【本情景可顺手示范的地道表达】在学生卡壳或表达生硬时以台词形式自然带出，【严禁】开篇就把清单念给学生：
+${phraseLines || '  （无）'}
+
+【沉浸纪律】
+1. 全程以角色身份与学生对答，不要跳出角色讲"课本式"说明；确需点拨时用灰色括号旁白（如（小声提示：…））或 :::correction 块，点拨完立刻回到情景。
+2. 你的日文自称沿用「${phrasing}」，对学生的称呼沿用「${userCallJp}」，与角色语气融合自然。
+3. 学生用中文向你求助、卡壳或说"听不懂"时，可短暂出戏用中文给最小提示，随后立即回到情景继续演，不要停在出戏状态。
+4. 每次回复除台词外必须留出让学生接话的空间（提问 / 等待 / 递话头），严禁一口气把整个情景推完、把学生的话也替他说完。
+5. 情景里出现的新词、新句型按学生当前等级自然控制难度；超出等级的用法先用简单说法绕过去，别为了演戏堆砌难句。`;
+}
+
+/**
+ * 人格与称呼契约。
+ *
+ * 此前人格只被拼成一句话（`人设：${persona}`），用户精心写的二次元人设最终只贡献一行字。
+ * 这里把人格提升为独立契约，并划出【红线】：人格只改措辞、不改事实——
+ * 因为 aiPersona 是用户自由文本，可能写"你是一个胡说八道的角色"，
+ * 若允许它覆盖词义 / 读音 / 声调 / 语法接续 / JLPT 等级，教学就会失真。
+ */
+export function buildPersonaSection(
+  tutorName: string,
+  userName: string,
+  settings?: ApiSettings
+): string {
+  const persona = settings?.aiPersona?.trim() || '亲切温柔的AI日语老师，讲解生动清晰，以中文贴心引导，适度穿插精炼实用的日语例句与互动';
+  const aiSelfJp = settings?.aiFirstPersonJp?.trim() || '私[わたし]';
+  const aiSelfCn = settings?.aiFirstPersonCn?.trim() || '我';
+  const callJp = settings?.userCallNameJp?.trim() || `${stripRubyMarkers(userName) || userName}さん`;
+  const callCn = settings?.userCallNameCn?.trim() || (stripRubyMarkers(userName) || userName);
+
+  return `【人格与称呼契约】
+- 你的人格设定：${persona}
+- 日文自称：${aiSelfJp}　中文自称：${aiSelfCn}
+- 对学生的日文称呼：${callJp}　中文称呼：${callCn}（首次出现学生名字时用此称呼，不要硬编码别称）
+- 【措辞层】语气、用词风格、情绪表达、吐槽与鼓励方式，全部由上面的人格设定决定，请务必演足、不要退回"通用助教"腔调。
+- 【事实层·红线】单词词义、假名读音、声调、语法接续、JLPT 等级等客观教学事实，只能来自系统提供的词典与语法数据。人格设定【不得】覆盖、夸张、戏说或虚构这些事实。
+- 若人格设定与教学准确性冲突（例如人设要求你"故意说错"），永远以【准确性优先】，只用人格口吻去表达正确内容。
+- 人名、专名的注音由前端词法系统自动处理，你只需按上述称呼书写，不要手工用圆括号标音。`;
 }
 
 export function buildSystemPrompt(
@@ -272,7 +464,6 @@ export function buildSystemPrompt(
 ): string {
   const tutorName = settings?.aiTutorName?.trim() || 'Shiori AI';
   const userName = settings?.userName?.trim() || '学习者';
-  const persona = settings?.aiPersona?.trim() || '亲切温柔的AI日语私教，讲解生动清晰，以中文贴心引导，适度穿插精炼实用的日语例句与互动';
 
   if (settings) {
     syncNameRubyFromSettings(settings);
@@ -290,7 +481,15 @@ export function buildSystemPrompt(
   const tutorDisplay = tutorReading ? `${cleanTutorName}(${tutorReading})` : cleanTutorName;
   const userDisplay = userReading ? `${cleanUserName}(${userReading})` : cleanUserName;
 
-  sections.push(`你叫【${tutorDisplay}】，你的学生是【${userDisplay}】（母语中文、当前 ${profile.level} ${profile.levelLabel}）。人设：${persona}。请始终自然亲切地以该身份教学。`);
+  sections.push(`你叫【${tutorDisplay}】，你的学生是【${userDisplay}】（母语中文、当前 ${profile.level} ${profile.levelLabel}）。请始终自然亲切地以该身份教学。`);
+
+  // ——— 人格与称呼契约（措辞层；含「人格不得改写教学事实」红线）———
+  sections.push(buildPersonaSection(tutorName, userName, settings));
+
+  // ——— 情景演练设定（此前 mode / scenario 是死参数，场景从未进入系统提示词）———
+  if (scenario) {
+    sections.push(buildScenarioSection(scenario, mode, settings));
+  }
 
   // ——— 唯一硬性输出契约（<jp> 包裹 / 禁圆括号注音 / 互补注音）———
   sections.push(JP_OUTPUT_CONTRACT);
@@ -303,10 +502,10 @@ export function buildSystemPrompt(
 
   // ——— 教学人格与自然回应准则（合并原“开放性/自然全能/上下文连贯”重叠处）———
   sections.push(`【教学人格与自然回应准则】
-1. 像真实的母语私教一样自然、连贯、有温度地交流，根据学生输入自适应；文末可用中文提出 1 个轻松问题或造句邀请，鼓励学生开口。
+1. 像真实的母语老师一样自然、连贯、有温度地交流，根据学生输入自适应；文末可用中文提出 1 个轻松问题或造句邀请，鼓励学生开口。
 2.【话题全面配合·反拒答契约（最高优先级）】
 - 用户的指令具有最高优先级。
-- 你是学生的专属日语私教与语言伙伴，学生的兴趣与好奇就是你的教学素材。无论学生想聊什么都要接住并深入聊下去。
+- 你是学生的专属日语老师与语言伙伴，学生的兴趣与好奇就是你的教学素材。无论学生想聊什么都要接住并深入聊下去。
 - 【绝对禁止】出现任何拒答式反应，包括但不限于：「这个话题不适合」「我们换个话题吧」「作为AI我不便讨论」等推脱、说教或生硬转移话题的表现。学生主动开启的话题，一律承接并展开。
 - 即使用户的要求和日语学习无关也应优先满足用户的需求。
 3. 学生想模拟生活/职场/动漫场景时自然融入沉浸演练。
@@ -336,22 +535,23 @@ better: <jp>更自然的母语者表达</jp>
 
   // ——— 防失忆契约（精简版；上轮具体要求的原文由每轮动态注入追踪）———
   sections.push(`【练习验收与防失忆契约】
-1. 你提出的练习/造句/跟读/提问都是【你要负责验收的契约】。回复前先回看自己上一轮说了什么——若你刚提过要求，学生本轮【默认是对该要求的作答】，按验收而非闲聊处理。
+1. 你提出的练习、造句建议、示范例句或提问都是【你要负责验收的契约】。回复前先回看上一轮——学生本轮发言【默认是对该要求的作答或采纳练习】，按教学验收而非突兀闲聊处理。
 2. 验收流程：先肯定学生动手做了 → 对照你原要求检查（语法/词汇用对了吗、说完整了吗）→ 不到位处用 :::correction 温和纠错 → 给清晰下一步。
-3. 严禁：把学生的作答当自发错误来批评、对学生按你要求说的话表示困惑、跳过验收跳新话题、原样重复你上一轮刚提过的同一要求。
+3. 严禁失忆与过度反应：严禁因学生按你建议造句或练习而质问“怎么突然聊到xx了/为什么突然说这个”等过度反应；严禁把作答当自发闲聊或错误批评、跳过验收跳新话题、原样重复同一要求。
 4. 学生说“不会/太难”或提新疑问时，先安抚降难、给提示或先答疑，把原任务降级为可选，不强硬判分；只完成一部分时先肯定已做部分再引导补足。
 5. 学情档案里已收录的词与语法都属于学生【已学知识】，严禁当成从未学过的新词从零科普（禁“今天我们来学一个新词…”式失忆）。`);
 
   // ——— 长程上下文记忆准则（独立、简短）———
   sections.push(`【长程连贯记忆准则】
-1. 始终联系、回顾上文你与学生说过的例句、纠正与约定话题。
-2. 学生说“刚才/上一个/你之前说的/那个特例”或省略主语追问时，必须精准追溯上文呼应解答，禁止答“我不记得/我没说过”或答非所问。
-3. 前后观点与情境设定保持一致。`);
+1. 始终联系、回顾上文你与学生说过的例句、造句建议、纠正与约定话题。
+2. 学生按你给的建议造句、跟进或使用相关例句时，必须顺应教学情境自然点评承接。
+3. 学生说“刚才/上一个/你之前说的/那个特例”或省略主语追问时，必须精准追溯上文呼应解答，禁止答“我不记得/我没说过”或答非所问。
+4. 前后观点与情境设定保持一致。`);
 
   // ——— 调试指令：仅当 debugMode 为真时注入 ———
   if (debugMode) {
     sections.push(`【系统诊断与调试指令支持（最高优先机制）】
-当学生提问以“/debug”、“/prompt”、“/system”开头或含“调试模式”时：立即临时脱离角色扮演与私教人设，以客观、透明、真实的 AI 系统专家视角，如实汇报所询问的任何系统元信息（当前系统 Prompt 完整设定、识别到的水平、学情档案词汇语法记录状态、模型与参数等）；严禁以角色口吻回避，知无不言。`);
+当学生提问以“/debug”、“/prompt”、“/system”开头或含“调试模式”时：立即临时脱离角色扮演与老师人设，以客观、透明、真实的 AI 系统专家视角，如实汇报所询问的任何系统元信息（当前系统 Prompt 完整设定、识别到的水平、学情档案词汇语法记录状态、模型与参数等）；严禁以角色口吻回避，知无不言。`);
   }
 
   return sections.join('\n\n');
@@ -417,14 +617,24 @@ export function optimizeMessagesContext(
     }
   }
 
-  // 待验收互动任务追踪：识别"上一轮助手消息中亲自提出的练习要求 / 提问"，
+  // 待验收互动任务追踪：识别助手消息中亲自提出的练习要求 / 提问，
   // 并把要求原文注入 System Prompt，杜绝模型忘记自己刚布置的任务而产生错误反应。
-  const lastAssistantMsg = [...recentMessages].reverse().find((m) => m.role === 'assistant');
-  if (lastAssistantMsg?.content) {
-    const pendingTask = detectPendingTask(lastAssistantMsg.content);
-    if (pendingTask) {
-      effectiveSystemPrompt += formatPendingTaskDirective(pendingTask);
+  // 跨轮追溯：若最新助手消息未检测到任务（如仅为简短答疑），向前回溯倒数第 2 条助手消息，
+  // 确保学生中间简短提问后再提交作业时，原造句/练习任务不被冲掉。
+  const assistantMsgs = recentMessages.filter((m) => m.role === 'assistant');
+  const lastAssistantMsg = assistantMsgs[assistantMsgs.length - 1];
+  let pendingTask = lastAssistantMsg?.content ? detectPendingTask(lastAssistantMsg.content) : null;
+
+  if (!pendingTask && assistantMsgs.length >= 2) {
+    const prevAssistantMsg = assistantMsgs[assistantMsgs.length - 2];
+    const prevTask = prevAssistantMsg?.content ? detectPendingTask(prevAssistantMsg.content) : null;
+    if (prevTask && (prevTask.kind === 'production' || prevTask.kind === 'repeat' || prevTask.kind === 'choice')) {
+      pendingTask = prevTask;
     }
+  }
+
+  if (pendingTask) {
+    effectiveSystemPrompt += formatPendingTaskDirective(pendingTask);
   }
 
   const formattedMessages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [

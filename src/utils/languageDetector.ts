@@ -57,46 +57,6 @@ export function extractJapaneseSpans(rawText: string): string[] {
   return spans;
 }
 
-/**
- * 从文本中提取专供日语 TTS 语音合成朗读的纯正日文文本：
- * 1. 优先提取所有 <j>...</p> 标签内的日文内容
- * 2. 剥离可能存在的注音方括号语法（如 [かんじ]）与 Markdown 标记
- * 3. 若无标签（如用户自身消息），且含有假名，则提取并朗读
- */
-export function extractJapaneseSpeakableText(sentenceText: string): string {
-  if (!sentenceText) return '';
-
-  let japanesePieces: string[] = [];
-
-  if (hasJapaneseTag(sentenceText)) {
-    japanesePieces = extractJapaneseSpans(sentenceText);
-  } else if (/[ぁ-んァ-ヶ]/.test(sentenceText)) {
-    // 用户输入的无标签日文
-    japanesePieces = [sentenceText];
-  }
-
-  if (japanesePieces.length === 0) return '';
-
-  return japanesePieces
-    .map((piece) => {
-      let clean = piece;
-      // 剥离可能存在的内部注音语法：漢字[かんじ] -> 漢字
-      clean = clean.replace(/([一-龯々〆ヵヶぁ-んァ-ヶーa-zA-Z0-9]+)\[([ぁ-んァ-ヶー]+)(?:\|\d+)?\]/g, '$1');
-      clean = clean.replace(/\[[ぁ-んァ-ヶーa-zA-Z0-9|]+\]/g, '');
-      // 剥离 Markdown 符号
-      clean = clean.replace(/[*#_`]/g, '');
-      return clean.trim();
-    })
-    .filter((p) => p.length > 0)
-    .join('、 ');
-}
-
-/**
- * 提炼整段消息中的全部正规日语句子（用于“朗读整段”时避免音色朗读中文解释）
- */
-export function extractAllJapaneseSentences(fullText: string): string {
-  return extractJapaneseSpeakableText(fullText);
-}
 
 /**
  * 移除文本中所有的日文包裹标签 <jp>、</jp>、<j>、<p>、</p> 等（用于纯文本展示或复制）

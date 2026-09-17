@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect, use
 import { createPortal } from 'react-dom';
 import { BookOpen, Check, Copy } from 'lucide-react';
 import { WordDictionaryPopover } from '../components/Chat/WordDictionaryPopover';
-import { LearnedWord, FavoriteExpression } from '../types';
+import { LearnedWord, FavoriteExpression, ExternalDictSource } from '../types';
 import { dictionaryService } from '../services/dictionaryService';
 import { useBackButton } from '../utils/backButtonManager';
 
@@ -780,6 +780,7 @@ export interface DictionaryProviderProps {
   ttsRate?: number;
   learnedWords?: LearnedWord[];
   furiganaHideMastered?: boolean;
+  externalDictSource?: ExternalDictSource;
   themeColor?: string;
   rubyColor?: string;
   onSaveWord?: (word: {
@@ -825,6 +826,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
   ttsRate = 1.0,
   learnedWords = [],
   furiganaHideMastered = true,
+  externalDictSource = 'moji',
   themeColor,
   rubyColor,
   onSaveWord,
@@ -1070,6 +1072,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
     startCaret: { node: Node; offset: number } | null;
     currentX: number;
     currentY: number;
+    isHolding: boolean;
     isActive: boolean;
     timer: any;
     targetEl: HTMLElement | null;
@@ -1077,6 +1080,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
 
   // 全局划词选区处理与事件驱动：支持桌面鼠标划选、手机端手势滑动划选及输入框内划选
   useEffect(() => {
+    let lastScrollTime = 0;
     const processCurrentSelection = (
       cursorX?: number,
       cursorY?: number,
@@ -1104,7 +1108,6 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
             const cx = cursorX ?? targetEl.getBoundingClientRect().right;
             const cy = cursorY ?? targetEl.getBoundingClientRect().top;
             const anchorRect = new DOMRect(cx - 10, cy - 12, 20, 20);
-            const sentenceContext = targetEl.value;
 
             setSelectionAction({
               text: rawText,
@@ -1113,7 +1116,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
               anchorRect,
               anchorEl: targetEl,
               isFromJTag: false,
-              sentenceContext,
+              sentenceContext: undefined, // 默认只查用户实际选中的内容，不考虑上下文
               isInput: true,
             });
             return true;
@@ -1197,11 +1200,6 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
           const parentEl = sel.anchorNode?.parentElement;
           const isFromJTag =
             !!parentEl?.closest('.ruby-word-unit') || !!parentEl?.closest('.ruby-item');
-          const sentenceContext =
-            parentEl?.closest('.bubble-line')?.textContent ||
-            parentEl?.closest('.message-bubble')?.textContent ||
-            parentEl?.textContent ||
-            '';
 
           const commonContainer = trimmedRange.commonAncestorContainer;
           const anchorEl = (commonContainer.nodeType === Node.ELEMENT_NODE
@@ -1248,7 +1246,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
             offsetInLine,
             offsetInBubble,
             isFromJTag,
-            sentenceContext,
+            sentenceContext: undefined, // 默认只查用户实际选中的内容，不考虑上下文
             selectionRange: liveRange,
           });
           return true;
@@ -1338,15 +1336,16 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
         startCaret: caret,
         currentX: touch.clientX,
         currentY: touch.clientY,
+        isHolding: false,
         isActive: false,
         timer: null as any,
         targetEl: target,
       };
 
-      // 220ms 触控长按进入选词准备，给予微触感反馈
+      // 220ms 触控长按进入准备态，给予微触感反馈（原地抬起可查词；横向滑动可划选；垂直滑动则放行界面滚动）
       touchInfo.timer = setTimeout(() => {
         if (!touchInfoRef.current) return;
-        touchInfoRef.current.isActive = true;
+        touchInfoRef.current.isHolding = true;
         try {
           if (navigator.vibrate) navigator.vibrate(12);
         } catch {}
@@ -1361,18 +1360,33 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
       const touch = e.touches[0];
       const dx = touch.clientX - ti.startX;
       const dy = touch.clientY - ti.startY;
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
 
-      // 手势意图识别：如果垂直滑动显著大于横向滑动，说明用户在上下滚动列表浏览对话
+      // 【触摸意图核心优化】：
+      // 当触摸移动明显是垂直方向时（无论滑动之前是否在屏幕上停留过、哪怕停留触发了 220ms 振动准备态），
+      // 均无条件判定为用户浏览界面的滚动翻页意图，立即取消划选，清除误触发的临时选区，放行原生丝滑滚动！
       if (!ti.isActive) {
-        if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) {
-          // 垂直滚动：立即取消滑动划选，放行原生丝滑滚动
+        if (absDy > 6 && absDy >= absDx) {
+          lastScrollTime = Date.now();
           if (ti.timer) clearTimeout(ti.timer);
           touchInfoRef.current = null;
+
+          // 及时清除可能因长按或浏览器默认行为产生的选区，避免留下高亮残影
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            sel.removeAllRanges();
+          }
+          if (selectionActionRef.current) {
+            setSelectionAction(null);
+          }
+          clearTimeout(selChangeTimeout);
+          // 严禁调用 e.preventDefault()，无阻碍放行原生滚动
           return;
         }
 
-        // 横向滑移超过 10px 且水平位移占优：立即激活滑动划词模式
-        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+        // 仅当手指明确横向移动（水平位移绝对占优）时，才真正锁定划选模式
+        if (absDx > 8 && absDx > absDy * 1.25) {
           if (ti.timer) clearTimeout(ti.timer);
           ti.isActive = true;
           try {
@@ -1381,8 +1395,23 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
         }
       }
 
-      // 已激活滑动划词模式：阻止页面垂直抖动与滚动，实时随着手指移动更新文本选区
+      // 处于划选模式中：
       if (ti.isActive) {
+        // 如果在划选中用户忽然大幅度垂直拉动（用户放弃划选，想快速滑动离开页面）：
+        if (absDy > 45 && absDy > absDx * 1.6) {
+          if (ti.timer) clearTimeout(ti.timer);
+          touchInfoRef.current = null;
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            sel.removeAllRanges();
+          }
+          if (selectionActionRef.current) {
+            setSelectionAction(null);
+          }
+          return;
+        }
+
+        // 锁定划选模式下阻止页面晃动与滚动，实时更新选区
         if (e.cancelable) {
           e.preventDefault();
         }
@@ -1414,9 +1443,16 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
         if (e.cancelable) {
           e.preventDefault();
         }
-        // 手指抬起：根据最终选区精准呼出查词悬浮胶囊
+        // 手指抬起：根据最终划选选区精准呼出查词悬浮胶囊
         processCurrentSelection(ti.currentX, ti.currentY, ti.targetEl);
         touchInfoRef.current = null;
+        return;
+      }
+
+      // 用户在原地长按（停留 > 220ms 且未滑动位移）
+      if (ti.isHolding) {
+        touchInfoRef.current = null;
+        processCurrentSelection(ti.currentX, ti.currentY, ti.targetEl);
         return;
       }
 
@@ -1444,17 +1480,23 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
       }
     };
 
-    // 监听 selectionchange 作为全平台选词兜底
+    // 监听 selectionchange 作为全平台选词兜底（受滚动窗口防护过滤）
     let selChangeTimeout: any = null;
     const handleSelectionChange = () => {
       if (touchInfoRef.current?.isActive) return;
+      if (Date.now() - lastScrollTime < 350) return;
       clearTimeout(selChangeTimeout);
       selChangeTimeout = setTimeout(() => {
+        if (Date.now() - lastScrollTime < 350) return;
         const sel = window.getSelection();
         if (sel && !sel.isCollapsed && sel.toString().trim().length > 0) {
           processCurrentSelection();
         }
       }, 160);
+    };
+
+    const handleGlobalScroll = () => {
+      lastScrollTime = Date.now();
     };
 
     document.addEventListener('mousedown', handleMouseDown, true);
@@ -1464,6 +1506,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
     document.addEventListener('touchend', handleTouchEnd);
     document.addEventListener('contextmenu', handleContextMenu);
     document.addEventListener('selectionchange', handleSelectionChange);
+    window.addEventListener('scroll', handleGlobalScroll, { capture: true, passive: true });
 
     return () => {
       document.removeEventListener('mousedown', handleMouseDown, true);
@@ -1473,6 +1516,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
       document.removeEventListener('touchend', handleTouchEnd);
       document.removeEventListener('contextmenu', handleContextMenu);
       document.removeEventListener('selectionchange', handleSelectionChange);
+      window.removeEventListener('scroll', handleGlobalScroll, true);
       if (selChangeTimeout) clearTimeout(selChangeTimeout);
     };
   }, []);
@@ -1538,7 +1582,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
       offsetInLine: selectionAction.offsetInLine,
       offsetInBubble: selectionAction.offsetInBubble,
       isFromJTag: selectionAction.isFromJTag,
-      sentenceContext: selectionAction.sentenceContext,
+      sentenceContext: undefined, // 选中文本查词句：默认只查用户实际选中的内容，不考虑上下文
       selectionRange: selectionAction.selectionRange,
     });
 
@@ -1713,7 +1757,6 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
             isFromJTag={activeParams.isFromJTag}
             sentenceContext={activeParams.sentenceContext}
             onClose={closeDictionary}
-            ttsRate={ttsRate}
             onSaveWord={onSaveWord}
             onRemoveWord={onRemoveWord}
             favoriteExpressions={favoriteExpressions}
@@ -1723,6 +1766,7 @@ export const DictionaryProvider: React.FC<DictionaryProviderProps> = ({
             learnedWords={learnedWords}
             themeColor={themeColor}
             rubyColor={rubyColor}
+            externalDictSource={externalDictSource}
             onLookupStart={beginLookup}
             onLookupEnd={endLookup}
           />,

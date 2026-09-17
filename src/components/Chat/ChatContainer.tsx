@@ -34,6 +34,8 @@ interface ChatContainerProps {
   onOpenCollectedGrammar?: (targetTitle?: string) => void;
   /** 点击消息旁的「已收录新单词」提示，直接打开学情档案的生词本页并定位 */
   onOpenCollectedWords?: (targetWord?: string) => void;
+  /** 是否开启深度思考：关闭时连"思考中"占位都不渲染，保持界面与旧版完全一致 */
+  deepThinkingEnabled?: boolean;
 }
 
 export const ChatContainer: React.FC<ChatContainerProps> = ({
@@ -48,7 +50,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
   onScenarioChange,
   isLoading,
   generatingMessageId,
-  aiTutorName = 'AI 私教',
+  aiTutorName = 'AI 老师',
   userName = '学习者',
   aiAvatar,
   userAvatar,
@@ -58,6 +60,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
   onResendMessage,
   onOpenCollectedGrammar,
   onOpenCollectedWords,
+  deepThinkingEnabled = true,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevSessionIdRef = useRef<string | undefined>(sessionId);
@@ -266,6 +269,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({
             onOpenCollectedGrammar={onOpenCollectedGrammar}
             onOpenCollectedWords={onOpenCollectedWords}
             isGenerating={message.id === generatingMessageId}
+            deepThinkingEnabled={deepThinkingEnabled}
           />
         ))}
       </div>

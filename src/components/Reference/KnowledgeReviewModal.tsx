@@ -2,14 +2,13 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { LearnedWord, LearnedGrammar, FavoriteExpression } from '../../types';
 import { RubyText } from '../Chat/RubyText';
 import { FuriganaTitle } from '../Common/FuriganaTitle';
-import { speechService } from '../../services/speechService';
+import { useDictionary } from '../../context/DictionaryContext';
 import {
   X,
   Search,
-  Brain,
+  NotebookTabs,
   Sprout,
   BookOpen,
-  Volume2,
   Trash2,
   RotateCw,
   CheckCircle2,
@@ -59,9 +58,26 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
   highlightTarget,
   onClearHighlight,
 }) => {
+  const { openDictionary } = useDictionary();
   const [activeTab, setActiveTab] = useState<'vocab' | 'grammar' | 'favorites'>(initialTab);
   const [masteryFilter, setMasteryFilter] = useState<'ALL' | 'learning' | 'reviewing' | 'mastered'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // 点击单词卡片打开对话区同款完整词典弹窗
+  const handleWordCardClick = (word: LearnedWord, e: React.MouseEvent<HTMLElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('.card-footer') || target.closest('button')) {
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    openDictionary({
+      word: word.surface,
+      reading: word.reading,
+      anchorRect: rect,
+      anchorEl: e.currentTarget,
+      isFromJTag: true,
+    });
+  };
 
   // Flashcard Review Mode State
   const [isFlashcardMode, setIsFlashcardMode] = useState(false);
@@ -206,18 +222,23 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
     handleNextCard();
   };
 
+  /**
+   * 掌握度徽章。
+   * `count` 是【主动测验次数】（旧版这里是"温习次数"，曾把被动遇见也算了进去，
+   * 导致学生在对话里碰到两次就算"温习中"，已拆分）。
+   */
   const renderMasteryBadge = (mastery: 'learning' | 'reviewing' | 'mastered', count: number) => {
     switch (mastery) {
       case 'mastered':
         return (
-          <span className="knowledge-mastery-badge mastered" title={`温习 ${count} 次，已熟记`}>
+          <span className="knowledge-mastery-badge mastered" title={`已测验 ${count} 次，已熟记`}>
             <CheckCircle2 size={12} />
             <span>已掌握</span>
           </span>
         );
       case 'reviewing':
         return (
-          <span className="knowledge-mastery-badge reviewing" title={`温习 ${count} 次`}>
+          <span className="knowledge-mastery-badge reviewing" title={`已测验 ${count} 次`}>
             <Clock size={12} />
             <span>温习 ({count}次)</span>
           </span>
@@ -239,11 +260,11 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
         <div className="modal-header">
           <div className="modal-title-group">
             <div className="knowledge-title-icon">
-              <Brain size={22} className="text-sakura-primary" />
+              <NotebookTabs size={22} className="text-sakura-primary" />
             </div>
             <div>
               <div className="knowledge-title-main">
-                <h2>学情档案与知识库</h2>
+                <h2>笔记本</h2>
                 <span className="knowledge-memory-tag">跨会话永久记忆</span>
               </div>
               <p className="modal-subtitle">
@@ -540,39 +561,31 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                               {(currentCard as LearnedWord).pos && (
                                 <span className="card-pos-tag">{(currentCard as LearnedWord).pos}</span>
                               )}
-                              <button
-                                className="card-audio-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  speechService.speak(
-                                    (currentCard as LearnedWord).reading || (currentCard as LearnedWord).surface,
-                                    ttsRate
-                                  );
-                                }}
-                              >
-                                <Volume2 size={16} />
-                              </button>
                             </div>
                             <div className="card-meaning-block">
                               <span className="card-meaning-label">释义：</span>
                               <span className="card-meaning-text">{(currentCard as LearnedWord).meaning}</span>
                             </div>
-                            {(currentCard as LearnedWord).detail && (
-                              <div className="card-detail-block">
-                                <span className="card-detail-label">用法：</span>
-                                <span className="card-detail-text">{(currentCard as LearnedWord).detail}</span>
-                              </div>
-                            )}
-                            {(currentCard as LearnedWord).exampleJp && (
-                              <div className="card-example-block">
-                                <div className="example-jp-line">
-                                  <RubyText content={(currentCard as LearnedWord).exampleJp!} ttsRate={ttsRate} />
-                                </div>
-                                {(currentCard as LearnedWord).exampleCn && (
-                                  <p className="example-cn-line">{(currentCard as LearnedWord).exampleCn}</p>
-                                )}
-                              </div>
-                            )}
+                            <div className="flashcard-open-dict-wrap">
+                              <button
+                                type="button"
+                                className="flashcard-open-dict-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  openDictionary({
+                                    word: (currentCard as LearnedWord).surface,
+                                    reading: (currentCard as LearnedWord).reading,
+                                    anchorRect: rect,
+                                    anchorEl: e.currentTarget,
+                                    isFromJTag: true,
+                                  });
+                                }}
+                              >
+                                <BookOpen size={13} />
+                                <span>打开词典小窗</span>
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <div className="card-back-details">
@@ -671,6 +684,8 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                         key={word.id}
                         className={`knowledge-card word-card ${isWordTarget(word) ? 'card-focus-highlight' : ''}`}
                         data-key={word.surface}
+                        onClick={(e) => handleWordCardClick(word, e)}
+                        title="点击打开词典小窗查看完整释义与例句"
                       >
                         <div className="card-header">
                           <div className="word-surface-reading">
@@ -679,49 +694,32 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                               reading={word.reading}
                               className="word-surface"
                             />
-                            {word.pitch !== undefined && (
-                              <span className="pitch-accent-badge">
-                                声调: {word.pitch === 0 ? '0 平板' : `${word.pitch} 型`}
-                              </span>
-                            )}
-                            {word.level && <span className="word-level-tag">{word.level}</span>}
-                            {word.pos && <span className="word-pos-tag">{word.pos}</span>}
+                            <div className="word-tags-row">
+                              {word.pitch !== undefined && (
+                                <span className="pitch-accent-badge">
+                                  声调: {word.pitch === 0 ? '0 平板' : `${word.pitch} 型`}
+                                </span>
+                              )}
+                              {word.level && <span className="word-level-tag">{word.level}</span>}
+                              {word.pos && <span className="word-pos-tag">{word.pos}</span>}
+                            </div>
                           </div>
-                          <button
-                            className="card-icon-btn speak"
-                            onClick={() => speechService.speak(word.reading || word.surface, ttsRate)}
-                            title="朗读"
-                          >
-                            <Volume2 size={15} />
-                          </button>
                         </div>
 
                         <div className="card-body">
                           <p className="card-meaning">{word.meaning || '日常词汇'}</p>
-                          {word.detail && <p className="card-detail-tip">用法：{word.detail}</p>}
-                          {word.exampleJp && (
-                            <div className="card-example-tip">
-                              <div className="example-jp">
-                                <RubyText content={word.exampleJp} interactive={false} ttsRate={ttsRate} />
-                              </div>
-                              {word.exampleCn && (
-                                <div className="example-cn">
-                                  {word.exampleCn.startsWith('（') || word.exampleCn.startsWith('(')
-                                    ? word.exampleCn
-                                    : `（${word.exampleCn}）`}
-                                </div>
-                              )}
-                            </div>
-                          )}
                         </div>
 
-                        <div className="card-footer">
+                        <div className="card-footer" onClick={(e) => e.stopPropagation()}>
                           <div className="status-selector-group">
                             <div className="mastery-quick-chips">
                               <button
                                 type="button"
                                 className={`mastery-chip-btn chip-learning ${word.mastery === 'learning' ? 'active' : ''}`}
-                                onClick={() => onUpdateWordMastery(word.id, 'learning')}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onUpdateWordMastery(word.id, 'learning');
+                                }}
                                 title="标记为初学阶段"
                               >
                                 初学
@@ -729,7 +727,10 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                               <button
                                 type="button"
                                 className={`mastery-chip-btn chip-reviewing ${word.mastery === 'reviewing' ? 'active' : ''}`}
-                                onClick={() => onUpdateWordMastery(word.id, 'reviewing')}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onUpdateWordMastery(word.id, 'reviewing');
+                                }}
                                 title="标记为温习阶段"
                               >
                                 温习
@@ -737,7 +738,10 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                               <button
                                 type="button"
                                 className={`mastery-chip-btn chip-mastered ${word.mastery === 'mastered' ? 'active' : ''}`}
-                                onClick={() => onUpdateWordMastery(word.id, 'mastered')}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onUpdateWordMastery(word.id, 'mastered');
+                                }}
                                 title="标记为已熟练掌握"
                               >
                                 已掌握
@@ -747,7 +751,10 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
 
                           <button
                             className="card-icon-btn delete"
-                            onClick={() => onRemoveWord(word.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onRemoveWord(word.id);
+                            }}
                             title="移除此词汇"
                           >
                             <Trash2 size={14} />
@@ -796,13 +803,6 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                           </div>
                           <div className="grammar-actions">
                             <button
-                              className="card-icon-btn speak"
-                              onClick={() => speechService.speak(fav.reading || fav.text, ttsRate)}
-                              title="朗读该表达"
-                            >
-                              <Volume2 size={14} />
-                            </button>
-                            <button
                               className="card-icon-btn delete"
                               onClick={() => onRemoveFavorite?.(fav.id)}
                               title="取消收藏"
@@ -845,13 +845,6 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                               <div key={i} className="favorite-example-item">
                                 <div className="example-jp">
                                   <RubyText content={ex.jp} interactive={false} ttsRate={ttsRate} />
-                                  <button
-                                    className="card-icon-btn speak"
-                                    onClick={() => speechService.speak(ex.jp, ttsRate)}
-                                    title="朗读例句"
-                                  >
-                                    <Volume2 size={13} />
-                                  </button>
                                 </div>
                                 <p className="example-cn">{ex.zh}</p>
                               </div>
@@ -874,7 +867,7 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                     <Layers size={40} className="empty-icon" />
                     <p>暂无符合筛选条件的语法</p>
                     <span className="empty-sub">
-                      私教在对话中讲解或纠正句型时，会自动带着接续公式、中文释义、语感点拨与例句收录到这里
+                      老师在对话中讲解或纠正句型时，会自动带着接续公式、中文释义、语感点拨与例句收录到这里
                     </span>
                   </div>
                 ) : (
@@ -935,13 +928,6 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
                           <div className="grammar-example-box">
                             <div className="example-jp">
                               <RubyText content={grammar.exampleJp} ttsRate={ttsRate} />
-                              <button
-                                className="card-icon-btn speak"
-                                onClick={() => speechService.speak(grammar.exampleJp!, ttsRate)}
-                                title="朗读例句"
-                              >
-                                <Volume2 size={13} />
-                              </button>
                             </div>
                             {grammar.exampleCn && <p className="example-cn">{grammar.exampleCn}</p>}
                           </div>
@@ -949,8 +935,9 @@ export const KnowledgeReviewModal: React.FC<KnowledgeReviewModalProps> = ({
 
                         <div className="grammar-footer">
                           <span className="grammar-source">
-                            来源: {grammar.source || '私教教学'}
-                            {grammar.reviewCount > 1 ? ` · 反复温习 ${grammar.reviewCount} 次` : ''}
+                            来源: {grammar.source || '老师教学'}
+                            {grammar.reviewCount > 0 ? ` · 已测验 ${grammar.reviewCount} 次` : ''}
+                            {(grammar.exposureCount || 0) > 0 ? ` · 遇见 ${grammar.exposureCount} 次` : ''}
                           </span>
                           <div className="status-selector-group">
                             <div className="mastery-quick-chips">

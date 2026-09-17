@@ -479,7 +479,7 @@ export function extractKnowledgeFromMessage(
       exampleJp: aiExample || undefined,
       exampleCn:
         cleanupGrammarCn(pickGrammarField(fields, ['examplecn', '译文', '翻译'])) || undefined,
-      source: '私教精讲',
+      source: '老师精讲',
     });
   }
 

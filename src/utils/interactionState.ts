@@ -95,28 +95,33 @@ const PRODUCTION_KEYWORDS = [
   '轮到你',
   '你来试试',
   '你来',
+  '你可以说',
+  '可以试着',
+  '比如可以说',
+  '不妨试',
+  '试着用',
+  '造个句子',
   'てみて',
   'てごらん',
   'てみよう',
   'てみましょう',
-  'てください',
+  '使ってみて',
   '言ってみ',
   '言ってごらん',
   '答えて',
   '書いてみ',
   '作ってみ',
   '考えてみ',
+  '作ってみて',
+  '言ってみて',
+  '答えてみて',
   '練習',
   'チャレンジ',
 ];
 
 const MAX_REQUIREMENT_CHARS = 220;
 
-/**
- * 检测一条助手消息中是否存在【待验收的互动任务】。
- * 只检查消息末尾的若干句（要求通常放在结尾），既提高准确率，也避免把全篇讲解误判为任务。
- */
-export function detectPendingTask(assistantText: string, tailSentenceCount = 3): PendingTask | null {
+export function detectPendingTask(assistantText: string, tailSentenceCount = 6): PendingTask | null {
   if (!assistantText || !assistantText.trim()) return null;
 
   const cleaned = cleanText(assistantText);
@@ -125,29 +130,57 @@ export function detectPendingTask(assistantText: string, tailSentenceCount = 3):
   const sentences = splitSentences(cleaned);
   if (sentences.length === 0) return null;
 
+  // 扩大扫描窗口至末尾 6 句（或全部句子），防止造句建议被后置的解释或鼓励挤出窗口
   const tail = sentences.slice(-tailSentenceCount);
   const tailText = tail.join('');
 
-  // 末尾若干句整体属于语法讲解/模板说明 → 判定为无任务
-  if (tail.every((s) => EXPLANATION_MARKERS.test(s))) return null;
-
-  const actionableTail = tail.filter((s) => !EXPLANATION_MARKERS.test(s));
-  const actionableText = actionableTail.length > 0 ? actionableTail.join('') : tailText;
-
+  // 1. 强行动指令匹配（跟读、选择题、造句建议）
+  // 具有高优先级：即便带有“比如/例如/～”等语法说明，只要包含明确的练习/造句行动指令，就绝不是纯讲解！
   let kind: PendingTaskKind | null = null;
-  if (REPEAT_PATTERNS.test(actionableText)) {
+  let taskIndexInTail = -1;
+
+  if (REPEAT_PATTERNS.test(tailText)) {
     kind = 'repeat';
-  } else if (CHOICE_PATTERNS.test(actionableText) && /[？?]/.test(actionableText)) {
+  } else if (CHOICE_PATTERNS.test(tailText) && /[？?]/.test(tailText)) {
     kind = 'choice';
-  } else if (PRODUCTION_KEYWORDS.some((k) => actionableText.includes(k))) {
+  } else if (PRODUCTION_KEYWORDS.some((k) => tailText.includes(k))) {
     kind = 'production';
-  } else if (/[？?]/.test(actionableText) || /吗[？?]?$|呢[？?]?$/.test(actionableText)) {
-    kind = 'question';
   }
 
-  if (!kind) return null;
+  // 2. 定位到具体触发任务的句子位置
+  if (kind) {
+    for (let i = 0; i < tail.length; i++) {
+      const s = tail[i];
+      if (
+        (kind === 'repeat' && REPEAT_PATTERNS.test(s)) ||
+        (kind === 'choice' && CHOICE_PATTERNS.test(s)) ||
+        (kind === 'production' && PRODUCTION_KEYWORDS.some((k) => s.includes(k)))
+      ) {
+        taskIndexInTail = i;
+        break;
+      }
+    }
+  } else {
+    // 3. 若无明确造句/跟读/选择题指令，再看是否向学生提出了真实提问（排除末尾全为纯语法说明的情况）
+    if (!tail.every((s) => EXPLANATION_MARKERS.test(s))) {
+      for (let i = tail.length - 1; i >= 0; i--) {
+        const s = tail[i];
+        if (EXPLANATION_MARKERS.test(s)) continue;
+        if (/[？?]/.test(s) || /吗[？?]?$|呢[？?]?$/.test(s)) {
+          kind = 'question';
+          taskIndexInTail = i;
+          break;
+        }
+      }
+    }
+  }
 
-  let requirement = tailText.trim();
+  // 既无行动指令也无提问 → 判定为无待验收任务
+  if (!kind || taskIndexInTail === -1) return null;
+
+  // 提取从任务句（向前稍微带入1句背景）至结尾的文本作为 requirement
+  const relevantSentences = tail.slice(Math.max(0, taskIndexInTail - 1));
+  let requirement = relevantSentences.join('').trim();
   if (requirement.length > MAX_REQUIREMENT_CHARS) {
     requirement = requirement.slice(-MAX_REQUIREMENT_CHARS);
     const firstSpace = requirement.indexOf(' ');
@@ -161,7 +194,7 @@ export function detectPendingTask(assistantText: string, tailSentenceCount = 3):
 }
 
 const KIND_LABEL: Record<PendingTaskKind, string> = {
-  production: '让学生实际产出日语（造句 / 翻译 / 试着说 / 回答）',
+  production: '让学生实际产出日语（造句建议 / 翻译 / 试着说 / 回答）',
   repeat: '让学生跟读、复述或朗读',
   choice: '向学生出示了选项或选择题',
   question: '向学生提出了问题',
@@ -182,7 +215,7 @@ export function formatPendingTaskDirective(task: PendingTask): string {
       ? `\n- 处理流程：①先承接并肯定学生的回应（哪怕是简短或稚嫩的尝试）→ ②针对他回应的具体内容给出实质反馈与补充 → ③自然地推进下一个话题或练习。`
       : `\n- 处理流程（严格按序）：①先明确点出"你按我说的做了/回答了"，真诚肯定其完成的动作 → ②严格对照上述原始要求逐条验收（指定的语法点用对了吗？指定的词汇用上了吗？说完整了吗？）→ ③对不到位之处用温和的 :::correction 纠错块给出更地道的说法，并解释原因 → ④给出明确的下一步（推进、加码或换角度再练一次），【严禁原样重复刚才那同一个要求】。`;
 
-  const bans = `\n- 严禁出现以下失忆表现：把学生按要求产出的句子当成他自发的闲聊或错误来批评；对学生按你要求说出的话表示困惑（如"咦，你为什么突然说这个"）；不置可否地跳到全新话题；一字不差地重复上一轮刚提过的练习要求。`;
+  const bans = `\n- 严禁失忆与过度反应：严禁因学生按你建议造句或练习而质问“怎么突然聊到xx了/为什么突然说这个”等过度反应；严禁把学生按要求产出的句子当成自发闲聊或错误来批评；严禁跳过验收直接切话题或机械重复上一轮同一要求。`;
 
   const escape = `\n- 例外处理（重要）：若学生本轮的回应明显是"不会 / 不知道 / 太难了 / 提示一下"或提出了全新的疑问、想换话题，则顺从学生的真实意图——先安抚、降低难度、拆小步骤、给出提示或直接答疑，并把原任务降级为可选，【绝不生硬强行判分或催促】。`;
 

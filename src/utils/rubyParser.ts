@@ -1,7 +1,7 @@
 import { COMMON_PITCH_DICT, calculateMoraPitches, MoraPitch } from './pitchAccentData';
 import { DICT_BY_WORD } from '../data/dictionaryData';
 import { deinflect } from './deinflector';
-import { MessageCorrection } from '../types';
+import { LessonMaterialPayload, MessageCorrection } from '../types';
 import { JAPANESE_TAG_REGEX, hasJapaneseTag } from './languageDetector';
 import { deriveJukugoReading, deriveSingleKanjiReading, isAllKanji } from './kanjiJukugoData';
 import { DictItem } from '../data/dictionaryData';
@@ -233,12 +233,329 @@ export function stripGrammarBlocks(text: string): string {
   return text.replace(/(?:\r?\n)?\s*:::grammar\s*[\s\S]*?(?::::|\n[ \t]*\n|$)/gi, '');
 }
 
-/** 剥离消息中所有 ::: 系统块（纠错块 + 语法精讲块） */
+/**
+ * 剥离消息中所有 ::: 系统块（纠错块 + 语法精讲块 + 备课教材块）。
+ *
+ * ⚠️ `:::lesson` 必须在这里也被剥离：它虽然要在气泡里渲染成教材卡片，但
+ * 【原始块体的键值行绝不能进入提示词摘录、朗读与 tokens 摘录】，否则
+ * `title:` / `script:` 这些行会当作正文被念出来。渲染与剥离是两件必须同时做的事。
+ */
 export function stripSystemBlocks(text: string): string {
   if (!text) return '';
-  return stripGrammarBlocks(text)
+  return stripLessonBlocks(stripGrammarBlocks(text))
     .replace(/:::correction\s*[\s\S]*?(?::::|$)/gi, '')
     .trim();
+}
+
+// ————————————————————————————————————————————————————————————
+// 备课教材块 `:::lesson`
+// ————————————————————————————————————————————————————————————
+
+/**
+ * 备课教材块（`:::lesson … :::`）的统一匹配式。
+ *
+ * 它与 `:::grammar` 同族但不是同一种东西：`:::grammar` 是纯系统块（界面完全不可见），
+ * 而 `:::lesson` 属于「既采集又剥离」——原始块体剥离，内容解析成结构化教材后渲染成卡片。
+ * 终止符同样额外接受空行，防模型漏写尾标记时吞掉整条回复。
+ */
+export const LESSON_BLOCK_REGEX = /:::lesson\s*([\s\S]*?)(?::::|\n[ \t]*\n|$)/gi;
+
+/** 剥离消息中所有 :::lesson 教材块（供提示词摘录 / 朗读 / 纯文本检索使用） */
+export function stripLessonBlocks(text: string): string {
+  if (!text) return '';
+  return text.replace(/(?:\r?\n)?\s*:::lesson\s*[\s\S]*?(?::::|\n[ \t]*\n|$)/gi, '');
+}
+
+/**
+ * 把一段日文清洗为规范注音串（保留花括号块，供渲染使用）。
+ *
+ * 与 `sanitizeAnnotatedText` 的分工：后者用于词典链路的"严格校验"（无有效块即返回 undefined，
+ * 且有长度上限）；本函数用于教材文本——即使模型一个注音都没写，也要照原样交给渲染层。
+ * 两者共用同一套 `scanAnnotatedUnits` 扫描器，绝不另写第三套括号正则。
+ */
+export function canonicalizeAnnotatedText(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  const src = raw.replace(/<\/?jp>/gi, '').trim();
+  if (!src) return '';
+  return normalizeAnnotatedUnits(src);
+}
+
+/** 取出 `<jp>…</jp>` 的标签内文；无标签则原样返回（教材契约允许省略标签） */
+function extractJpTaggedText(raw: string): string {
+  const m = raw.match(/<jp>([\s\S]*?)<\/jp>/i);
+  return m ? m[1] : raw;
+}
+
+const LESSON_FOCUS_VALUES = ['daily', 'travel', 'business', 'anime', 'shopping', 'kana', 'foundation'] as const;
+
+function isLessonFocus(v: string): v is (typeof LESSON_FOCUS_VALUES)[number] {
+  return (LESSON_FOCUS_VALUES as readonly string[]).includes(v);
+}
+
+/** 解析一行 `script:` 载荷：`S|<jp>…</jp>|中文译文|旁注`（译文与旁注可省略） */
+function parseScriptLine(value: string): { speaker: 'ai' | 'user'; jp: string; cn?: string; note?: string } | null {
+  const parts = value.split('|').map((p) => p.trim());
+  if (parts.length === 0) return null;
+
+  const rawSpeaker = (parts[0] || '').toLowerCase();
+  const speaker: 'ai' | 'user' =
+    rawSpeaker === 's' || rawSpeaker === 'st' || rawSpeaker === 'user' || rawSpeaker === '学生' || rawSpeaker === '我'
+      ? 'user'
+      : 'ai';
+
+  const jp = canonicalizeAnnotatedText(extractJpTaggedText(parts[1] || ''));
+  if (!jp) return null;
+
+  const cn = parts[2] ? extractJpTaggedText(parts[2]).trim() : '';
+  const note = parts[3] ? parts[3].trim() : '';
+
+  return {
+    speaker,
+    jp,
+    cn: cn || undefined,
+    note: note || undefined,
+  };
+}
+
+/**
+ * 解析备课教材块。返回 null 表示"这不是一份可用的教材"（调用方据此标记备课失败并保留骨架）。
+ *
+ * 注音纪律：所有日文字段一律走 {@link canonicalizeAnnotatedText}，其内部只使用
+ * `rubyParser.scanAnnotatedUnits`。绝不在这里手写第三套括号正则——那会污染生词本 key。
+ */
+export function parseLessonBlock(raw: string): LessonMaterialPayload | null {
+  if (!raw) return null;
+  const re = new RegExp(LESSON_BLOCK_REGEX.source, 'i');
+  const m = re.exec(raw);
+  if (!m) return null;
+
+  const payload: LessonMaterialPayload = {};
+  const script: NonNullable<LessonMaterialPayload['script']> = [];
+  const points: string[] = [];
+  const scenario: NonNullable<LessonMaterialPayload['scenario']> = {};
+  const scenarioGoals: string[] = [];
+
+  for (const line of (m[1] || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const sep = trimmed.indexOf(':');
+    if (sep <= 0) continue;
+
+    const key = trimmed.slice(0, sep).trim().toLowerCase();
+    const value = trimmed.slice(sep + 1).trim();
+    if (!value) continue;
+
+    switch (key) {
+      case 'title':
+        payload.title = value;
+        break;
+      case 'titlejp':
+        payload.titleJp = canonicalizeAnnotatedText(extractJpTaggedText(value));
+        break;
+      case 'goal':
+        payload.goal = value;
+        break;
+      case 'focus': {
+        const f = value.toLowerCase();
+        if (isLessonFocus(f)) payload.focus = f;
+        break;
+      }
+      case 'scenario':
+        scenario.title = value;
+        break;
+      case 'roleai':
+        scenario.roleAi = value;
+        break;
+      case 'roleuser':
+        scenario.roleUser = value;
+        break;
+      case 'opening':
+        scenario.initialMessage = canonicalizeAnnotatedText(extractJpTaggedText(value));
+        break;
+      case 'sgoal':
+        scenarioGoals.push(value);
+        break;
+      case 'script': {
+        const parsed = parseScriptLine(value);
+        if (parsed) script.push(parsed);
+        break;
+      }
+      case 'point':
+        points.push(value);
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (scenario.title || scenario.roleAi || scenario.roleUser || scenario.initialMessage || scenarioGoals.length) {
+    payload.scenario = { ...scenario, goals: scenarioGoals };
+  }
+  if (script.length) payload.script = script;
+  if (points.length) payload.points = points;
+
+  const hasAnything =
+    !!payload.title || !!payload.goal || !!payload.script?.length || !!payload.points?.length || !!payload.scenario;
+  return hasAnything ? payload : null;
+}
+
+/**
+ * 花括号宿主块 `{原文[读音]}`——软件注音语法的唯一合法契约形态。
+ * 三组捕获：宿主原文 / 读音 / **闭合花括号之内的送假名尾巴**。
+ *
+ * 第三组是为容错而生：模型常把送假名写进花括号里（`{来[ら]い}`），它语义上完全等价于
+ * 规范形式 `{来[ら]}い`。若不接住它，这段尾巴会被当成正文留在词条里、而括号内的读音则
+ * 泄成裸文本（`{来[ら]い}ブ` → `来らいブ`），属于**静默数据污染**，比单纯显示错误更危险。
+ */
+const BRACED_UNIT_SOURCE =
+  '\\{\\s*([^{}\\[\\]]+?)\\s*\\[\\s*([^\\]{}]+?)\\s*\\]\\s*([ぁ-んァ-ヶー]{0,16}?)\\s*\\}';
+
+/** 旧式"裸方括号注音" `原文[读音]`：仅向后兼容存量数据，与对话区解析器同一判定口径 */
+const BARE_UNIT_SOURCE =
+  '([一-龯々〆ヵヶぁ-んァ-ヶーa-zA-Z0-9]+)\\s*\\[\\s*([ぁ-んァ-ヶー]+)\\s*(?:\\|\\s*(\\d+)\\s*)?\\]';
+
+export interface AnnotatedUnit {
+  /** 宿主原文（`[` 之前的汉字部分） */
+  host: string;
+  /** 括号内的读音 */
+  reading: string;
+  /** 贴在读音之后、写在花括号内的送假名（`{来[ら]い}` → `い`），等价于写在花括号外 */
+  trailer: string;
+  /** 该单元在原文中的起始下标与整体长度 */
+  index: number;
+  length: number;
+}
+
+/**
+ * 扫描文本中所有注音单元，按出现顺序返回。
+ * `strictBraces = true` 时只认花括号宿主块（供"清洗成规范注音串"的严格校验路径使用）。
+ * 花括号形态天然优先命中，故裸方括号分支不会撕裂 `{番組[ばんぐみ]}` 这类块。
+ */
+export function scanAnnotatedUnits(text: string, strictBraces = false): AnnotatedUnit[] {
+  if (!text) return [];
+  // 每次新建实例：带 g 标志的正则常量会在多次调用间残留 lastIndex，导致漏匹配
+  const re = new RegExp(
+    strictBraces ? BRACED_UNIT_SOURCE : `${BRACED_UNIT_SOURCE}|${BARE_UNIT_SOURCE}`,
+    'g'
+  );
+  const units: AnnotatedUnit[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m[0].length === 0) {
+      re.lastIndex += 1;
+      continue;
+    }
+    const braced = m[1] !== undefined;
+    units.push({
+      host: (braced ? m[1] : m[4]) || '',
+      reading: (braced ? m[2] : m[5]) || '',
+      trailer: (braced ? m[3] : '') || '',
+      index: m.index,
+      length: m[0].length,
+    });
+  }
+  return units;
+}
+
+/** 该单元是否真的携带注音价值（宿主含汉字，且读音不是原文的复述） */
+function isMeaningfulUnit(u: AnnotatedUnit): boolean {
+  const host = u.host.trim();
+  const reading = u.reading.trim();
+  return !!host && !!reading && /[一-龯々〆]/.test(host) && reading !== host;
+}
+
+/**
+ * 清理注音单元之外的残留系统标记。
+ * 花括号一律剥除；失去宿主的孤儿读音括号（纯假名 `[よみ]`）连同内容丢弃——它已无所依附，
+ * 留下只会把读音混进正文；其余方括号仅去括号、保留内容，避免吞掉正文信息。
+ */
+function cleanStrayAnnotationMarks(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/[{}｛｝]/g, '')
+    .replace(/\[\s*[ぁ-んァ-ヶー\s]*\]/g, '')
+    .replace(/[[\]]/g, '');
+}
+
+/** 把文本中的注音单元统一重写成规范花括号块（送假名一律搬出花括号），无宿主的孤儿读音括号直接丢弃 */
+function normalizeAnnotatedUnits(text: string): string {
+  const units = scanAnnotatedUnits(text);
+  let out = '';
+  let cursor = 0;
+  for (const u of units) {
+    out += cleanStrayAnnotationMarks(text.slice(cursor, u.index));
+    out += isMeaningfulUnit(u) ? `{${u.host.trim()}[${u.reading.trim()}]}${u.trailer}` : u.host + u.trailer;
+    cursor = u.index + u.length;
+  }
+  out += cleanStrayAnnotationMarks(text.slice(cursor));
+  return out.trim();
+}
+
+/**
+ * 剥除注音标记，只留宿主原文。
+ * 用途：把"带注音的词典词条串"还原成纯文本词形（生词本词形、词典 key、朗读文本等一切不能带标记的场景）。
+ * 分工：`sanitizeAnnotatedText` 负责"清洗成规范注音串"，本函数负责"抹掉注音只留原文"。
+ */
+export function stripAnnotatedBlockMarks(text: string): string {
+  if (!text) return '';
+  const units = scanAnnotatedUnits(text);
+  let out = '';
+  let cursor = 0;
+  for (const u of units) {
+    out += cleanStrayAnnotationMarks(text.slice(cursor, u.index));
+    out += u.host + u.trailer;
+    cursor = u.index + u.length;
+  }
+  out += cleanStrayAnnotationMarks(text.slice(cursor));
+  return out.trim();
+}
+
+/**
+ * 清洗 AI 返回的注音文本为软件规范注音串（`{原文[读音]}` 花括号宿主块）。
+ *
+ * 规则：只有"宿主含汉字且读音不同于原文"的块才保留，纯假名与片假名外来语一律降级为纯文本；
+ * 送假名写在花括号内的容错形态会被搬正（`{来[ら]い}` → `{来[ら]}い`）；
+ * 一个有效块都没有、或结果超出长度上限时返回 undefined，调用方退化为"纯原文 + 独立读音行"。
+ */
+export function sanitizeAnnotatedText(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const src = raw.replace(/```[a-zA-Z]*/g, '').replace(/[\r\n]+/g, '').trim();
+  if (!src) return undefined;
+
+  // 严格路径：裸方括号不算契约内的注音块。
+  // 注意必须用未清洗的原文做有效性判定——否则"无注音价值的块"被降级后，
+  // 就无法区分"模型真的没写注音"与"写了但没价值"两种情形。
+  const hasValidBlock = scanAnnotatedUnits(src, true).some(isMeaningfulUnit);
+  const out = normalizeAnnotatedUnits(src);
+  if (!hasValidBlock || !out || out.length > 400) return undefined;
+  return out;
+}
+
+/**
+ * 从 `{原文[读音]}` 注音串反推整段读音（假名朗读）。
+ *
+ * 原理：块内取 [读音]（含写在花括号内的送假名尾巴）、块外原文照抄。块外只可能是送假名、
+ * 助词、标点或片假名外来语，因此结果与旧契约里让模型单独输出的 "reading" 完全等价——
+ * 但只有一个信源，天然不存在 "word 与 reading 互相矛盾" 这种模型自由发挥出的破绽。
+ *
+ * 例：`どんな{場面[ばめん]}でもいいから、{一度[いちど]}{試[ため]}してみてね`
+ *   → `どんなばめんでもいいから、いちどためしてみてね`
+ *
+ * 注意：结果残留汉字即代表调用方传入了"未注音"的文本（模型漏注），由调用方判定丢弃。
+ */
+export function deriveReadingFromAnnotated(text: string): string {
+  if (!text) return '';
+  const units = scanAnnotatedUnits(text);
+  if (units.length === 0) return cleanStrayAnnotationMarks(text);
+  let out = '';
+  let cursor = 0;
+  for (const u of units) {
+    out += cleanStrayAnnotationMarks(text.slice(cursor, u.index));
+    out += u.reading.trim() + u.trailer;
+    cursor = u.index + u.length;
+  }
+  out += cleanStrayAnnotationMarks(text.slice(cursor));
+  return out.trim();
 }
 
 
@@ -272,7 +589,7 @@ export function extractCorrectionBlock(rawText: string): { cleanText: string; co
   }
 
   const cleanText = cleanOrphanedRubyBrackets(
-    stripGrammarBlocks(rawText.replace(correctionRegex, '')).trim()
+    stripLessonBlocks(stripGrammarBlocks(rawText.replace(correctionRegex, ''))).trim()
   );
 
   if (original || corrected || explanation) {
@@ -300,11 +617,14 @@ export function parseMessageSegments(
   fallbackCorrection?: MessageCorrection,
   isStreaming = false
 ): MessageSegment[] {
-  // 语法精讲块是纯系统块：先在渲染前整体剥离，绝不能在气泡里露出 :::grammar 字样或未完成后台草稿
-  rawText = stripGrammarBlocks(rawText || '');
+  // 语法精讲块与备课教材块都是系统块：先在渲染前整体剥离，
+  // 绝不能在气泡里露出 :::grammar / :::lesson 字样或未完成后台草稿
+  rawText = stripLessonBlocks(stripGrammarBlocks(rawText || ''));
   if (isStreaming) {
     rawText = rawText.replace(/:::grammar[\s\S]*$/gi, '');
     rawText = rawText.replace(/(?:\n|^)\s*:::(?:g(?:r(?:a(?:m(?:m(?:a(?:r)?)?)?)?)?)?)?$/i, '');
+    rawText = rawText.replace(/:::lesson[\s\S]*$/gi, '');
+    rawText = rawText.replace(/(?:\n|^)\s*:::(?:l(?:e(?:s(?:s(?:o(?:n)?)?)?)?)?)?$/i, '');
   }
 
   if (!rawText) {
@@ -1404,19 +1724,3 @@ function segmentJapanesePlainWords(text: string, tokens: RubyToken[], ctx: Annot
   }
 }
 
-
-// 供 TTS 语音合成剥离注音文本
-export function stripRubyForTTS(text: string): string {
-  if (!text) return '';
-  let stripped = stripSystemBlocks(text);
-  // 移除日文标签 <j> 和 <p>
-  stripped = stripped.replace(/<\/?j>/gi, '').replace(/<\/?p>/gi, '');
-  stripped = stripped.replace(/<\/?jp>/gi, '');
-  stripped = stripped.replace(/[*#_`]/g, '');
-  // 剥离显式注音宿主块的系统标记花括号（界面与朗读均不可见）
-  stripped = stripped.replace(/[{}｛｝]/g, '');
-  // 剥离可能存在的方括号注音
-  stripped = stripped.replace(/([一-龯々〆ヵヶぁ-んァ-ヶーa-zA-Z0-9]+)\[([ぁ-んァ-ヶー]+)(?:\|\d+)?\]/g, '$1');
-  stripped = stripped.replace(/<\/?[^>]+(>|$)/g, '');
-  return stripped.trim();
-}

@@ -1,19 +1,18 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ChatMessage, FuriganaMode, PitchDisplayMode, MessageCorrection } from '../../types';
 import { RubyText } from './RubyText';
-import { parseMessageSegments, stripRubyForTTS, normalizeJapaneseMarkdownTags } from '../../utils/rubyParser';
+import { parseMessageSegments, normalizeJapaneseMarkdownTags } from '../../utils/rubyParser';
 import { sanitizeStreamingContent } from '../../utils/streamingSanitizer';
 import { getNameInitial, NameWithRuby } from '../../utils/nameRubyHelper';
 import { computeCorrectionDiff } from '../../utils/diffHelper';
-import { isJapaneseSentence, extractJapaneseSpeakableText, sanitizeActionDescriptions } from '../../utils/languageDetector';
-import { Volume2, CheckCircle2, AlertCircle, Pencil, RotateCcw, Layers, BookOpen } from 'lucide-react';
-import { speechService } from '../../services/speechService';
+import { sanitizeActionDescriptions } from '../../utils/languageDetector';
+import { CheckCircle2, AlertCircle, Pencil, RotateCcw, Layers, BookOpen, Brain, ChevronDown } from 'lucide-react';
 
 interface MessageItemProps {
   message: ChatMessage;
   furiganaMode: FuriganaMode;
   pitchDisplayMode: PitchDisplayMode;
-  ttsRate: number;
+  ttsRate?: number;
   aiTutorName?: string;
   userName?: string;
   aiAvatar?: string;
@@ -24,6 +23,8 @@ interface MessageItemProps {
   onOpenCollectedGrammar?: (targetTitle?: string) => void;
   onOpenCollectedWords?: (targetWord?: string) => void;
   isGenerating?: boolean;
+  /** 是否开启深度思考：关闭时既不渲染思考区块、也不显示"正在深度思考"占位 */
+  deepThinkingEnabled?: boolean;
 }
 
 // Leaf Renderer: Handles Japanese Parenthesis Dimming and Ruby Annotations
@@ -43,27 +44,28 @@ interface ParenSegment {
 }
 
 /**
- * 嵌套平衡括号扫描器：精准支持多层全角（）与半角()圆括号嵌套，
- * 遇到括号内嵌套括号（如（说明（细节）继续）或（例：「雨」(あめ)））时，
- * 绝不会因为内部闭括号而提前截断，完整保持灰显范围。
+ * 检查当前字符索引是否处于日文包裹标签 <jp> 或 <j> 内部
+ */
+function isInsideJapaneseTag(str: string, index: number): boolean {
+  const lastOpen = Math.max(
+    str.lastIndexOf('<jp>', index),
+    str.lastIndexOf('<j>', index)
+  );
+  if (lastOpen === -1) return false;
+  const lastClose = Math.max(
+    str.lastIndexOf('</jp>', index),
+    str.lastIndexOf('</p>', index),
+    str.lastIndexOf('<p>', index),
+    str.lastIndexOf('</j>', index)
+  );
+  return lastOpen > lastClose;
+}
+
+/**
+ * 嵌套平衡括号扫描器：精准支持多层全角（）与半角()圆括号嵌套
  */
 function parseParenthesisSegments(text: string): ParenSegment[] {
   if (!text) return [];
-
-  const isInsideJapaneseTag = (str: string, index: number): boolean => {
-    const lastOpen = Math.max(
-      str.lastIndexOf('<jp>', index),
-      str.lastIndexOf('<j>', index)
-    );
-    if (lastOpen === -1) return false;
-    const lastClose = Math.max(
-      str.lastIndexOf('</jp>', index),
-      str.lastIndexOf('</p>', index),
-      str.lastIndexOf('<p>', index),
-      str.lastIndexOf('</j>', index)
-    );
-    return lastOpen > lastClose;
-  };
 
   const segments: ParenSegment[] = [];
   const len = text.length;
@@ -72,7 +74,6 @@ function parseParenthesisSegments(text: string): ParenSegment[] {
 
   while (i < len) {
     const char = text[i];
-    // 寻找最外层开括号（且确保不在 <j> 标签内部，防止撕裂日文标签）
     if ((char === '（' || char === '(') && !isInsideJapaneseTag(text, i)) {
       const matchStart = i;
       const openParen = char;
@@ -99,7 +100,6 @@ function parseParenthesisSegments(text: string): ParenSegment[] {
       }
 
       if (foundClose) {
-        // 如果此前有普通文本
         if (matchStart > lastIndex) {
           segments.push({
             type: 'plain',
@@ -122,9 +122,6 @@ function parseParenthesisSegments(text: string): ParenSegment[] {
         i = matchEnd;
         continue;
       } else {
-        // 未找到配对闭括号：
-        // 关键优化：在流式输出中（或单边左括号情境下），自开括号起到当前文本末尾直接作为括号灰显内容处理！
-        // 这样在输出过程中即便只有左侧括号，后续吐字也会即刻呈灰色，当右括号到达时平滑无缝闭合，杜绝突兀变色。
         if (matchStart > lastIndex) {
           segments.push({
             type: 'plain',
@@ -162,115 +159,305 @@ function parseParenthesisSegments(text: string): ParenSegment[] {
   return segments;
 }
 
-const ParenthesisRuby: React.FC<ParenthesisRubyProps> = ({
-  text,
-  furiganaMode,
-  pitchDisplayMode,
-  ttsRate,
-}) => {
-  if (!text) return null;
+/**
+ * 拆分表格行单元格，支持转义竖线 \|
+ */
+function splitTableCells(line: string): string[] {
+  const trimmed = line.trim();
+  const content = trimmed.replace(/^\|\s*/, '').replace(/\s*\|$/, '');
+  const cells: string[] = [];
+  let current = '';
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    if (char === '\\' && i + 1 < content.length && content[i + 1] === '|') {
+      current += '|';
+      i++;
+    } else if (char === '|') {
+      cells.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
 
-  const segments = parseParenthesisSegments(text);
+interface TableBlock {
+  type: 'table';
+  key: string;
+  headers: string[];
+  alignments: ('left' | 'center' | 'right')[];
+  rows: string[][];
+  isLastBlock: boolean;
+}
 
-  return (
-    <>
-      {segments.map((seg, index) => {
-        if (seg.type === 'plain') {
-          return (
-            <RubyText
-              key={`plain-${index}`}
-              content={seg.content}
-              furiganaMode={furiganaMode}
-              pitchDisplayMode={pitchDisplayMode}
-              ttsRate={ttsRate}
-            />
-          );
+interface SingleLineBlock {
+  type: 'line';
+  key: string;
+  line: string;
+  isLastBlock: boolean;
+}
+
+type TextBlock = TableBlock | SingleLineBlock;
+
+interface FormattedSegment {
+  type: 'plain' | 'paren' | 'bold_italic' | 'bold' | 'italic' | 'strike' | 'code';
+  content: string;
+  openParen?: string;
+  closeParen?: string;
+  inner?: string;
+}
+
+/**
+ * 从左至右扫描最先发生的最外层行内语法元素（括号与各类 Markdown 行内标记）
+ * 确保外层结构（如全包围的括号或全包围的加粗）保持完整，内部递归解析，彻底根除截断问题。
+ */
+function parseFormattedSegments(text: string): FormattedSegment[] {
+  if (!text) return [];
+
+  const segments: FormattedSegment[] = [];
+  const len = text.length;
+  let i = 0;
+  let lastIndex = 0;
+
+  while (i < len) {
+    let bestStart = -1;
+    let bestType: FormattedSegment['type'] | null = null;
+    let bestEnd = -1;
+    let bestInner = '';
+    let bestOpen = '';
+    let bestClose = '';
+
+    for (let k = i; k < len; k++) {
+      const char = text[k];
+
+      // 1. 括号扫描（不在 <jp> 标签内）
+      if ((char === '（' || char === '(') && !isInsideJapaneseTag(text, k)) {
+        let depth = 1;
+        let found = false;
+        let closeChar = '';
+        let matchEnd = -1;
+        for (let j = k + 1; j < len; j++) {
+          const c = text[j];
+          if (c === '（' || c === '(') depth++;
+          else if (c === '）' || c === ')') {
+            depth--;
+            if (depth === 0) {
+              found = true;
+              closeChar = c;
+              matchEnd = j + 1;
+              break;
+            }
+          }
         }
+        bestStart = k;
+        bestType = 'paren';
+        bestOpen = char;
+        if (found) {
+          bestEnd = matchEnd;
+          bestClose = closeChar;
+          bestInner = text.slice(k + 1, matchEnd - 1);
+        } else {
+          bestEnd = len;
+          bestClose = '';
+          bestInner = text.slice(k + 1);
+        }
+        break;
+      }
 
-        // 括号及括号内文字灰显渲染，但内部词汇与划词查询过的内容保留虚线和点击即看功能
-        return (
-          <span key={`paren-${index}`} className="parenthesis-text roleplay-action-text">
-            {seg.openParen}
-            <RubyText
-              content={seg.inner || ''}
-              furiganaMode={furiganaMode}
-              pitchDisplayMode={pitchDisplayMode}
-              ttsRate={ttsRate}
-              interactive={true}
-            />
-            {seg.closeParen}
-          </span>
-        );
-      })}
-    </>
-  );
-};
+      // 2. 粗斜体 ***
+      if (text.startsWith('***', k)) {
+        const closeIdx = text.indexOf('***', k + 3);
+        if (closeIdx !== -1) {
+          bestStart = k;
+          bestType = 'bold_italic';
+          bestEnd = closeIdx + 3;
+          bestInner = text.slice(k + 3, closeIdx);
+          break;
+        }
+      }
 
-// Inline Markdown & Ruby Renderer:
-// Converts ***bold italic***, **bold**, *italic*, ~~strikethrough~~, `code` into HTML elements
-// while seamlessly preserving Ruby annotations and Japanese parenthesis dimming inside
-interface MarkdownRubyProps {
+      // 3. 粗体 **
+      if (text.startsWith('**', k) && !text.startsWith('***', k)) {
+        const closeIdx = text.indexOf('**', k + 2);
+        if (closeIdx !== -1) {
+          bestStart = k;
+          bestType = 'bold';
+          bestEnd = closeIdx + 2;
+          bestInner = text.slice(k + 2, closeIdx);
+          break;
+        }
+      }
+
+      // 4. 删除线 ~~
+      if (text.startsWith('~~', k)) {
+        const closeIdx = text.indexOf('~~', k + 2);
+        if (closeIdx !== -1) {
+          bestStart = k;
+          bestType = 'strike';
+          bestEnd = closeIdx + 2;
+          bestInner = text.slice(k + 2, closeIdx);
+          break;
+        }
+      }
+
+      // 5. 行内代码 `
+      if (char === '`') {
+        const closeIdx = text.indexOf('`', k + 1);
+        if (closeIdx !== -1) {
+          bestStart = k;
+          bestType = 'code';
+          bestEnd = closeIdx + 1;
+          bestInner = text.slice(k + 1, closeIdx);
+          break;
+        }
+      }
+
+      // 6. 斜体 *
+      if (char === '*' && !text.startsWith('**', k) && (k === 0 || text[k - 1] !== '*')) {
+        let closeIdx = -1;
+        for (let m = k + 1; m < len; m++) {
+          if (text[m] === '*' && text[m - 1] !== '*' && (m + 1 >= len || text[m + 1] !== '*')) {
+            closeIdx = m;
+            break;
+          }
+        }
+        if (closeIdx !== -1) {
+          bestStart = k;
+          bestType = 'italic';
+          bestEnd = closeIdx + 1;
+          bestInner = text.slice(k + 1, closeIdx);
+          break;
+        }
+      }
+    }
+
+    if (bestType !== null && bestStart !== -1) {
+      if (bestStart > lastIndex) {
+        segments.push({
+          type: 'plain',
+          content: text.substring(lastIndex, bestStart),
+        });
+      }
+      segments.push({
+        type: bestType,
+        content: text.substring(bestStart, bestEnd),
+        inner: bestInner,
+        openParen: bestOpen,
+        closeParen: bestClose,
+      });
+      lastIndex = bestEnd;
+      i = bestEnd;
+    } else {
+      break;
+    }
+  }
+
+  if (lastIndex < len) {
+    segments.push({
+      type: 'plain',
+      content: text.substring(lastIndex),
+    });
+  }
+
+  return segments;
+}
+
+interface FormattedInlineRubyProps {
   text: string;
   furiganaMode: FuriganaMode;
   pitchDisplayMode: PitchDisplayMode;
   ttsRate: number;
+  depth?: number;
 }
 
-const MarkdownRuby: React.FC<MarkdownRubyProps> = ({
+/**
+ * 行内格式统一递归解析器：完美协同 Markdown 行内元素（粗体、斜体、删除线、代码）
+ * 与全/半角括号灰显（parenthesis-text），杜绝任何语法嵌套导致的截断与样式丢失。
+ */
+const FormattedInlineRuby: React.FC<FormattedInlineRubyProps> = ({
   text,
   furiganaMode,
   pitchDisplayMode,
   ttsRate,
+  depth = 0,
 }) => {
   if (!text) return null;
 
-  // 1. 规范化处理：
-  // 1.0 规范化日文标签与行内 Markdown 的嵌套关系，防止标签被 Markdown 切分撕裂，
-  // 将 <jp>AAA**BBB**CCC</jp> 转化为 <jp>AAA</jp>**<jp>BBB</jp>**<jp>CCC</jp>
-  let normalized = normalizeJapaneseMarkdownTags(text);
+  let normalized = text;
+  if (depth === 0) {
+    // 1.0 规范化日文标签与行内 Markdown 的嵌套关系，防止标签被 Markdown 切分撕裂
+    normalized = normalizeJapaneseMarkdownTags(normalized);
 
-  // 1.1 假名注音紧贴粗体外侧时吸收入内，并自动去除多余的声调代码（如 |0、|1）：**词汇**[读音] -> **词汇[读音]**
-  normalized = normalized.replace(
-    /\*\*([一-龯々〆ヵヶぁ-んァ-ヶーa-zA-Z0-9]+)\*\*\[([ぁ-んァ-ヶー]+)(?:\|\d+)?\]/g,
-    (_m, word, reading) => {
-      return `**${word}[${reading}]**`;
+    // 1.1 全角双星号规范化为半角双星号，增强输入法宽容度
+    normalized = normalized.replace(/＊＊/g, '**');
+
+    // 1.2 假名注音紧贴粗体外侧时吸收入内：**词汇**[读音] -> **词汇[读音]**
+    normalized = normalized.replace(
+      /\*\*([^\*\n]+?)\*\*\s*\[([ぁ-んァ-ヶー]+)(?:\|\d+)?\]/g,
+      (_m, word, reading) => `**${word}[${reading}]**`
+    );
+    normalized = normalized.replace(
+      /\*([^\*\n]+?)\*\s*\[([ぁ-んァ-ヶー]+)(?:\|\d+)?\]/g,
+      (_m, word, reading) => `*${word}[${reading}]*`
+    );
+
+    // 1.3 容错单边未闭合的星号（例如某行只有奇数个 ** 时，在行尾自动成对闭合，杜绝裸露的 ** 显示）
+    const boldTokens = normalized.match(/\*\*/g);
+    if (boldTokens && boldTokens.length % 2 !== 0) {
+      normalized += '**';
     }
-  );
-
-  normalized = normalized.replace(
-    /\*([一-龯々〆ヵヶぁ-んァ-ヶーa-zA-Z0-9]+)\*\[([ぁ-んァ-ヶー]+)(?:\|\d+)?\]/g,
-    (_m, word, reading) => {
-      return `*${word}[${reading}]*`;
-    }
-  );
-
-  // 1.2 容错单边未闭合的星号（例如某行只有奇数个 ** 时，在行尾自动成对闭合，杜绝裸露的 ** 显示）
-  const boldTokens = normalized.match(/\*\*/g);
-  if (boldTokens && boldTokens.length % 2 !== 0) {
-    normalized += '**';
   }
 
-  // 2. 正则匹配行内 Markdown 语法元素：
-  // 优先级：***粗斜体*** -> **粗体** -> *斜体* -> ~~删除线~~ -> `代码`
-  const mdRegex = /(\*\*\*[\s\S]+?\*\*\*|\*\*[\s\S]+?\*\*|\*[^\*\n]+?\*|~~[\s\S]+?~~|`[^`\n]+?`)/g;
-  const parts = normalized.split(mdRegex);
+  // 超过安全递归深度时直接输出叶子注音组件
+  if (depth > 5) {
+    return (
+      <RubyText
+        content={normalized}
+        furiganaMode={furiganaMode}
+        pitchDisplayMode={pitchDisplayMode}
+        ttsRate={ttsRate}
+        interactive={true}
+      />
+    );
+  }
+
+  const segments = parseFormattedSegments(normalized);
 
   return (
     <>
-      {parts.map((part, index) => {
-        if (!part) return null;
+      {segments.map((seg, index) => {
+        if (!seg) return null;
+
+        // 括号及括号内文字灰显：内部递归调用，保持括号从头到尾的灰显完整性
+        if (seg.type === 'paren') {
+          return (
+            <span key={index} className="parenthesis-text roleplay-action-text">
+              {seg.openParen}
+              <FormattedInlineRuby
+                text={seg.inner || ''}
+                furiganaMode={furiganaMode}
+                pitchDisplayMode={pitchDisplayMode}
+                ttsRate={ttsRate}
+                depth={depth + 1}
+              />
+              {seg.closeParen}
+            </span>
+          );
+        }
 
         // 粗斜体 ***text***
-        if (part.startsWith('***') && part.endsWith('***') && part.length >= 6) {
-          const inner = part.slice(3, -3);
+        if (seg.type === 'bold_italic') {
           return (
             <strong key={index} className="md-bold-text">
               <em className="md-italic-text">
-                <ParenthesisRuby
-                  text={inner}
+                <FormattedInlineRuby
+                  text={seg.inner || ''}
                   furiganaMode={furiganaMode}
                   pitchDisplayMode={pitchDisplayMode}
                   ttsRate={ttsRate}
+                  depth={depth + 1}
                 />
               </em>
             </strong>
@@ -278,78 +465,95 @@ const MarkdownRuby: React.FC<MarkdownRubyProps> = ({
         }
 
         // 粗体 **text**
-        if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-          const inner = part.slice(2, -2);
+        if (seg.type === 'bold') {
           return (
             <strong key={index} className="md-bold-text">
-              <ParenthesisRuby
-                text={inner}
+              <FormattedInlineRuby
+                text={seg.inner || ''}
                 furiganaMode={furiganaMode}
                 pitchDisplayMode={pitchDisplayMode}
                 ttsRate={ttsRate}
+                depth={depth + 1}
               />
             </strong>
           );
         }
 
         // 斜体 *text*
-        if (part.startsWith('*') && part.endsWith('*') && part.length >= 2 && !part.startsWith('**')) {
-          const inner = part.slice(1, -1);
+        if (seg.type === 'italic') {
           return (
             <em key={index} className="md-italic-text">
-              <ParenthesisRuby
-                text={inner}
+              <FormattedInlineRuby
+                text={seg.inner || ''}
                 furiganaMode={furiganaMode}
                 pitchDisplayMode={pitchDisplayMode}
                 ttsRate={ttsRate}
+                depth={depth + 1}
               />
             </em>
           );
         }
 
         // 删除线 ~~text~~
-        if (part.startsWith('~~') && part.endsWith('~~') && part.length >= 4) {
-          const inner = part.slice(2, -2);
+        if (seg.type === 'strike') {
           return (
             <s key={index} className="md-strikethrough-text">
-              <ParenthesisRuby
-                text={inner}
+              <FormattedInlineRuby
+                text={seg.inner || ''}
                 furiganaMode={furiganaMode}
                 pitchDisplayMode={pitchDisplayMode}
                 ttsRate={ttsRate}
+                depth={depth + 1}
               />
             </s>
           );
         }
 
         // 行内代码 `code`
-        if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-          const inner = part.slice(1, -1);
+        if (seg.type === 'code') {
           return (
             <span key={index} className="md-inline-code">
-              <ParenthesisRuby
-                text={inner}
+              <FormattedInlineRuby
+                text={seg.inner || ''}
                 furiganaMode={furiganaMode}
                 pitchDisplayMode={pitchDisplayMode}
                 ttsRate={ttsRate}
+                depth={depth + 1}
               />
             </span>
           );
         }
 
-        // 普通文本段（调用 ParenthesisRuby 变灰括号文本并挂载日文注音）
+        // 普通文本段：交由底层 RubyText 进行日文分词、振假名注音与划词查词
         return (
-          <ParenthesisRuby
+          <RubyText
             key={index}
-            text={part}
+            content={seg.content}
             furiganaMode={furiganaMode}
             pitchDisplayMode={pitchDisplayMode}
             ttsRate={ttsRate}
+            interactive={true}
           />
         );
       })}
     </>
   );
+};
+
+// 兼容别名
+const ParenthesisRuby: React.FC<ParenthesisRubyProps> = (props) => {
+  return <FormattedInlineRuby {...props} />;
+};
+
+interface MarkdownRubyProps {
+  text: string;
+  furiganaMode: FuriganaMode;
+  pitchDisplayMode: PitchDisplayMode;
+  ttsRate: number;
+}
+
+const MarkdownRuby: React.FC<MarkdownRubyProps> = (props) => {
+  return <FormattedInlineRuby {...props} />;
 };
 
 interface LineContentRendererProps {
@@ -366,7 +570,7 @@ const LineContentRenderer: React.FC<LineContentRendererProps> = ({
   ttsRate,
 }) => {
   return (
-    <MarkdownRuby
+    <FormattedInlineRuby
       text={content}
       furiganaMode={furiganaMode}
       pitchDisplayMode={pitchDisplayMode}
@@ -502,8 +706,8 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
   message,
   furiganaMode,
   pitchDisplayMode,
-  ttsRate,
-  aiTutorName = 'AI 私教',
+  ttsRate = 1.0,
+  aiTutorName = 'AI 老师',
   userName = '学习者',
   aiAvatar,
   userAvatar,
@@ -512,11 +716,13 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
   onOpenCollectedGrammar,
   onOpenCollectedWords,
   isGenerating = false,
+  deepThinkingEnabled = true,
 }) {
   const isUser = message.role === 'user';
-  const [playingLineKey, setPlayingLineKey] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(message.content);
+  // 深度思考面板的展开状态：思考过程中自动展开（边想边看），回答完成后自动收起（把舞台让给正文）
+  const [reasoningExpanded, setReasoningExpanded] = useState(false);
 
   const senderTitle = isUser ? userName : aiTutorName;
   const avatarLetter = isUser
@@ -535,26 +741,37 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
     );
   }, [segments]);
 
-  // Speak single sentence/line (extracts pure Japanese without Chinese translation in brackets)
-  const handleSpeakSentence = (sentenceText: string, key: string) => {
-    if (playingLineKey === key) {
-      speechService.stop();
-      setPlayingLineKey(null);
-      return;
+  // ---------------- 深度思考（推理链）展示 ----------------
+  const reasoningText = useMemo(() => {
+    if (!deepThinkingEnabled || isUser) return '';
+    return (message.reasoning || '').trim();
+  }, [message.reasoning, deepThinkingEnabled, isUser]);
+
+  const hasReasoning = reasoningText.length > 0;
+
+  // 思考耗时文案：流式中显示"思考中"，结束后显示"思考 x.x 秒"
+  const reasoningDurationLabel = useMemo(() => {
+    if (!hasReasoning) return '';
+    if (isGenerating && !message.reasoningMs) return '思考中';
+    if (typeof message.reasoningMs === 'number' && message.reasoningMs > 0) {
+      return `思考 ${(message.reasoningMs / 1000).toFixed(1)} 秒`;
     }
+    return '';
+  }, [hasReasoning, isGenerating, message.reasoningMs]);
 
-    const speakable = extractJapaneseSpeakableText(sentenceText);
-    if (!speakable) return;
+  const prevGeneratingRef = useRef(false);
+  useEffect(() => {
+    const wasGenerating = prevGeneratingRef.current;
+    prevGeneratingRef.current = isGenerating;
 
-    speechService.speak(
-      speakable,
-      ttsRate,
-      undefined,
-      () => setPlayingLineKey(key),
-      () => setPlayingLineKey(null),
-      () => setPlayingLineKey(null)
-    );
-  };
+    if (isGenerating && hasReasoning) {
+      // 推理内容一到就自动展开，让用户实时看到思路演进
+      setReasoningExpanded(true);
+    } else if (wasGenerating && !isGenerating) {
+      // 正式回答已经就绪，自动收起思考区，避免长文霸占可视区域
+      setReasoningExpanded(false);
+    }
+  }, [isGenerating, hasReasoning]);
 
   // 用户消息编辑与重发操作
   const handleStartEdit = () => {
@@ -581,7 +798,7 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
     }
   };
 
-  // 渲染文本段落的多行内容（Markdown 语法、Ruby 注音与整句朗读按钮）
+  // 渲染文本段落的多行内容（Markdown 语法、表格、Ruby 注音与整句朗读按钮）
   const renderTextLines = (
     rawChunk: string,
     segIdx: number,
@@ -593,12 +810,127 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
     const safeText = sanitizedText.replace(/\{userName\}/g, userName);
     const lines = safeText.split('\n');
 
+    // 将单行序列转换为块级结构（将多行连续的表格聚合为 TableBlock）
+    const parseBlocks = (allLines: string[]): TextBlock[] => {
+      const result: TextBlock[] = [];
+      const total = allLines.length;
+      let i = 0;
+
+      while (i < total) {
+        const cur = allLines[i];
+        const trimmed = cur.trim();
+
+        // 检查 Markdown 表格起始：当前行包含 '|'，且下一行匹配分隔行规则
+        if (
+          trimmed.includes('|') &&
+          i + 1 < total &&
+          /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/.test(allLines[i + 1].trim())
+        ) {
+          const headerLine = trimmed;
+          const delimiterLine = allLines[i + 1].trim();
+          const rawHeaders = splitTableCells(headerLine);
+          const rawAlignments = splitTableCells(delimiterLine).map((d) => {
+            const hasLeft = d.startsWith(':');
+            const hasRight = d.endsWith(':');
+            if (hasLeft && hasRight) return 'center';
+            if (hasRight) return 'right';
+            return 'left';
+          });
+
+          const rows: string[][] = [];
+          let j = i + 2;
+          while (j < total) {
+            const rowTrimmed = allLines[j].trim();
+            if (!rowTrimmed || !rowTrimmed.includes('|')) {
+              break;
+            }
+            const cells = splitTableCells(rowTrimmed);
+            while (cells.length < rawHeaders.length) {
+              cells.push('');
+            }
+            rows.push(cells.slice(0, rawHeaders.length));
+            j++;
+          }
+
+          result.push({
+            type: 'table',
+            key: `${segIdx}-table-${i}`,
+            headers: rawHeaders,
+            alignments: rawAlignments,
+            rows,
+            isLastBlock: j === total,
+          });
+
+          i = j;
+          continue;
+        }
+
+        result.push({
+          type: 'line',
+          key: `${segIdx}-${i}`,
+          line: cur,
+          isLastBlock: i === total - 1,
+        });
+        i++;
+      }
+
+      return result;
+    };
+
+    const blocks = parseBlocks(lines);
+
     return (
       <div key={`text-${segIdx}`} className="bubble-content-text">
-        {lines.map((line, idx) => {
-          const lineKey = `${segIdx}-${idx}`;
+        {blocks.map((block) => {
+          if (block.type === 'table') {
+            return (
+              <div key={block.key} className="bubble-line md-table-container">
+                <table className="md-table">
+                  <thead>
+                    <tr>
+                      {block.headers.map((h, hIdx) => (
+                        <th key={hIdx} style={{ textAlign: block.alignments[hIdx] || 'left' }}>
+                          <LineContentRenderer
+                            content={h}
+                            furiganaMode={furiganaMode}
+                            pitchDisplayMode={pitchDisplayMode}
+                            ttsRate={ttsRate}
+                          />
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, rIdx) => (
+                      <tr key={rIdx}>
+                        {row.map((cell, cIdx) => {
+                          const isLastCell = rIdx === block.rows.length - 1 && cIdx === row.length - 1;
+                          return (
+                            <td key={cIdx} style={{ textAlign: block.alignments[cIdx] || 'left' }}>
+                              <LineContentRenderer
+                                content={cell}
+                                furiganaMode={furiganaMode}
+                                pitchDisplayMode={pitchDisplayMode}
+                                ttsRate={ttsRate}
+                              />
+                              {isLastCell && block.isLastBlock && !isUser && isGenerating && isLastSegment && (
+                                <span className="streaming-cursor-dot" title="AI 正在生成中..." />
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          }
+
+          const line = block.line;
+          const lineKey = block.key;
           const trimmed = line.trim();
-          const isLastLine = idx === lines.length - 1;
+          const isLastLine = block.isLastBlock;
 
           if (!trimmed) {
             return (
@@ -627,7 +959,6 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
           if (headerMatch) {
             const headerLevel = headerMatch[1].length;
             const headerContent = headerMatch[2];
-            const isJpSentence = isJapaneseSentence(headerContent);
             const hasRubyInLine = /\[.+?\]/.test(headerContent);
             const headingClassLevel = headerLevel <= 2 ? headerLevel : (headerLevel === 3 ? 3 : 4);
 
@@ -645,16 +976,6 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
                     pitchDisplayMode={pitchDisplayMode}
                     ttsRate={ttsRate}
                   />
-                  {!isUser && isJpSentence && (
-                    <button
-                      type="button"
-                      className={`sentence-speak-inline-btn ${playingLineKey === lineKey ? 'playing' : ''}`}
-                      onClick={() => handleSpeakSentence(headerContent, lineKey)}
-                      title={playingLineKey === lineKey ? '停止朗读此句' : '朗读此句'}
-                    >
-                      <Volume2 size={12} />
-                    </button>
-                  )}
                   {isLastLine && !isUser && isGenerating && isLastSegment && (
                     <span className="streaming-cursor-dot" title="AI 正在生成中..." />
                   )}
@@ -667,7 +988,6 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
           const quoteMatch = trimmed.match(/^>\s*(.*)$/);
           if (quoteMatch) {
             const quoteContent = quoteMatch[1];
-            const isJpSentence = isJapaneseSentence(quoteContent);
             const hasRubyInLine = /\[.+?\]/.test(quoteContent);
 
             return (
@@ -682,16 +1002,6 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
                     pitchDisplayMode={pitchDisplayMode}
                     ttsRate={ttsRate}
                   />
-                  {!isUser && isJpSentence && (
-                    <button
-                      type="button"
-                      className={`sentence-speak-inline-btn ${playingLineKey === lineKey ? 'playing' : ''}`}
-                      onClick={() => handleSpeakSentence(quoteContent, lineKey)}
-                      title={playingLineKey === lineKey ? '停止朗读此句' : '朗读此句'}
-                    >
-                      <Volume2 size={12} />
-                    </button>
-                  )}
                   {isLastLine && !isUser && isGenerating && isLastSegment && (
                     <span className="streaming-cursor-dot" title="AI 正在生成中..." />
                   )}
@@ -708,14 +1018,12 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
             (trimmed.startsWith('* ') && !trimmed.startsWith('**'));
           const bulletContent = isBullet ? trimmed.replace(/^([・\-+]|(\*\s+))\s*/, '') : trimmed;
 
-          // 5. 有序列表项 (1. 或 **1.** 等)
-          const numMatch = bulletContent.match(/^(?:\*\*(\d+)\.\*\*|\*\*(\d+)\.\s*\*|(\d+)\.)\s*(.*)$/);
+          // 5. 有序列表项 (1. 或 **1.** 等，精准防止撕裂双星号加粗标题)
+          const numMatch = bulletContent.match(/^(?:\*\*(\d+)\.\*\*\s*|(\d+)\.\s+)(.*)$/);
           const isNumbered = !isBullet && !!numMatch;
-          const numPrefix = isNumbered ? (numMatch[1] || numMatch[2] || numMatch[3]) : '';
-          const lineContent = isNumbered ? numMatch[4] : (isBullet ? bulletContent : line);
+          const numPrefix = isNumbered ? (numMatch[1] || numMatch[2]) : '';
+          const lineContent = isNumbered ? numMatch[3] : (isBullet ? bulletContent : line);
 
-          // Only show sentence-level audio button on lines whose primary language is actually Japanese
-          const isJpSentence = isJapaneseSentence(lineContent);
           const hasRubyInLine = /\[.+?\]/.test(lineContent);
 
           return (
@@ -736,17 +1044,6 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
                   ttsRate={ttsRate}
                 />
 
-                {/* Single sentence audio player button placed directly at the end of genuine Japanese sentences */}
-                {!isUser && isJpSentence && (
-                  <button
-                    type="button"
-                    className={`sentence-speak-inline-btn ${playingLineKey === lineKey ? 'playing' : ''}`}
-                    onClick={() => handleSpeakSentence(lineContent, lineKey)}
-                    title={playingLineKey === lineKey ? '停止朗读此句' : '朗读此句'}
-                  >
-                    <Volume2 size={12} />
-                  </button>
-                )}
                 {isLastLine && !isUser && isGenerating && isLastSegment && (
                   <span className="streaming-cursor-dot" title="AI 正在生成中..." />
                 )}
@@ -828,6 +1125,31 @@ export const MessageItem = React.memo<MessageItemProps>(function MessageItem({
       </div>
 
       <div className="message-body">
+        {/* 深度思考（推理链）面板：只有确实收到推理内容时才出现；关闭深度思考时完全不渲染 */}
+        {!isUser && hasReasoning && (
+          <div
+            className={`deep-thinking-panel ${reasoningExpanded ? 'is-open' : ''} ${isGenerating ? 'is-live' : ''}`}
+          >
+            <button
+              type="button"
+              className="deep-thinking-head"
+              onClick={() => setReasoningExpanded((v) => !v)}
+              title={reasoningExpanded ? '收起思考过程' : '展开查看完整思考过程'}
+            >
+              <Brain size={13} className="deep-thinking-icon" />
+              <span className="deep-thinking-title">深度思考</span>
+              {reasoningDurationLabel && (
+                <span className="deep-thinking-duration">{reasoningDurationLabel}</span>
+              )}
+              <span className="deep-thinking-toggle">{reasoningExpanded ? '收起' : '展开'}</span>
+              <ChevronDown
+                size={13}
+                className={`deep-thinking-chevron ${reasoningExpanded ? 'is-open' : ''}`}
+              />
+            </button>
+            {reasoningExpanded && <div className="deep-thinking-body">{reasoningText}</div>}
+          </div>
+        )}
         <div className={`message-bubble ${isUser ? 'bubble-user' : 'bubble-assistant'} ${!isUser && isGenerating && !hasAnyContent ? 'bubble-loading' : ''}`}>
           {!isUser && isGenerating && !hasAnyContent ? (
             <div className="typing-dots-container">

@@ -10,8 +10,11 @@ import { KnowledgeReviewModal } from './components/Reference/KnowledgeReviewModa
 import { SettingsModal } from './components/Settings/SettingsModal';
 import { DictionaryProvider } from './context/DictionaryContext';
 import { sendChatMessageStream } from './services/llmService';
-import { ChatMessage, RoleplayScenario } from './types';
+import { buildLessonPrepBrief } from './services/tokenOptimizer';
+import { continueSeedFor } from './services/curriculumPlanner';
+import { ChatMessage, Lesson, LessonStep, RoleplayScenario, StudyMode } from './types';
 import { sanitizeActionDescriptions } from './utils/languageDetector';
+import { stripSystemBlocks, parseLessonBlock } from './utils/rubyParser';
 import { countCompletedTurns } from './utils/subtitleHelper';
 import { syncNameRubyFromSettings } from './utils/nameRubyHelper';
 import { setupStatusBar } from './utils/statusBarHelper';
@@ -24,6 +27,19 @@ export function App() {
     plan,
     setPlan,
     toggleTaskCompleted,
+    // 课表 / 课时（Lesson）
+    progress,
+    axes,
+    planNextCourseLesson,
+    applyLessonMaterial,
+    failLessonMaterial,
+    attachLessonSession,
+    completeLessonStepManually,
+    startLessonStep,
+    setActiveLesson,
+    removeLesson,
+    resetCourse,
+    findScenarioById,
     sessions,
     currentSessionId,
     createNewSession,
@@ -41,6 +57,7 @@ export function App() {
     settings,
     setSettings,
     currentMode,
+    setCurrentMode,
     currentScenario,
     setCurrentScenario,
     planModalOpen,
@@ -72,6 +89,12 @@ export function App() {
     deletePersonaPreset,
     exportPersonaPresets,
     importPersonaPresets,
+    // 多套 API 连接配置档案
+    apiProfiles,
+    saveApiProfile,
+    applyApiProfile,
+    deleteApiProfile,
+    renameApiProfile,
     // Backup & Sync
     exportAllData,
     inspectBackupData,
@@ -227,22 +250,58 @@ export function App() {
   }, [settings.aiTutorName, settings.userName, settings.aiPersona]);
 
   // 统一的 LLM 智能教学会话流式发送器：直接将生成的 AI 内容原地流式写入指定的 AI 消息
-  const executeStreamChat = (contextHistory: ChatMessage[], targetAiMsgId: string) => {
+  //
+  // options 的 `sessionId` / `mode` / `scenario` 是覆盖项：供"刚创建会话就要立刻开课"的场景使用——
+  // React state 还没提交，闭包里的 currentSessionId / currentMode / currentScenario 全是旧值。
+  //
+  // 注意：备课不走这里（它不落气泡、不进学情），见 handlePrepareLesson。
+  const executeStreamChat = (
+    contextHistory: ChatMessage[],
+    targetAiMsgId: string,
+    options?: { sessionId?: string; mode?: StudyMode; scenario?: RoleplayScenario }
+  ) => {
     setIsLoading(true);
     setGeneratingMessageId(targetAiMsgId);
 
+    const effSessionId = options?.sessionId || currentSessionId;
+    const effMode: StudyMode = options?.mode || currentMode;
+    const effScenario: RoleplayScenario | undefined =
+      options?.scenario ?? (effMode === 'roleplay' ? currentScenario : undefined);
+
+    /** 本条 AI 消息的所有补丁都写在目标会话里，而不是"当前"会话 */
+    const patchMessage = (updater: Partial<ChatMessage> | ((prev: ChatMessage) => ChatMessage)) =>
+      updateMessage(targetAiMsgId, updater, effSessionId);
+
+    // 深度思考计时与容量控制
+    // 思考内容可能长达数千字（推理模型尤其如此），落盘前必须截断，
+    // 否则会话历史会迅速膨胀，localStorage 与后续渲染都会被拖垮。
+    const MAX_REASONING_CHARS = 6000;
+    let reasoningStartedAt = 0;
+    let reasoningDurationMs = 0;
+
     sendChatMessageStream(
       contextHistory,
-      currentMode,
+      effMode,
       profile,
       settings,
-      currentMode === 'roleplay' ? currentScenario : undefined,
+      effScenario,
       {
         onControllerReady: (controller) => {
           abortControllerRef.current = controller;
         },
+        onReasoning: (delta) => {
+          if (!reasoningStartedAt) reasoningStartedAt = Date.now();
+          patchMessage((prev) => ({
+            ...prev,
+            reasoning: ((prev.reasoning || '') + delta).slice(0, MAX_REASONING_CHARS),
+          }));
+        },
         onChunk: (delta) => {
-          updateMessage(targetAiMsgId, (prev) => ({
+          // 首个正文增量到达即视为"思考结束"，锁存思考耗时供界面展示
+          if (reasoningStartedAt && !reasoningDurationMs) {
+            reasoningDurationMs = Date.now() - reasoningStartedAt;
+          }
+          patchMessage((prev) => ({
             ...prev,
             content: (prev.content || '') + delta,
           }));
@@ -255,38 +314,48 @@ export function App() {
             total: tokens.total,
             estimated: tokens.estimated,
           };
-          // 1. 【关键顺序】先做学情入库拿到本轮收录的语法点，再一次性原位更新消息，
-          //    这样气泡旁的"已收录语法"提示与内容、token 统计同帧出现，不会二次闪动。
+          // 【关键顺序】先做学情入库拿到本轮收录的语法点，再一次性原位更新消息，
+          // 这样气泡旁的"已收录语法"提示与内容、token 统计同帧出现，不会二次闪动。
           const ingested = ingestKnowledgeAndTokens({
             id: targetAiMsgId,
             role: 'assistant',
             content: sanitizedText,
             timestamp: Date.now(),
-            mode: currentMode,
-            scenarioId: currentMode === 'roleplay' ? currentScenario.id : undefined,
+            mode: effMode,
+            scenarioId: effMode === 'roleplay' ? effScenario?.id : undefined,
             tokens: msgTokens,
           });
-          updateMessage(targetAiMsgId, (prev) => ({
-            ...prev,
-            content: sanitizedText,
-            tokens: msgTokens,
-            collectedGrammar: ingested.grammars.length ? ingested.grammars : undefined,
-            collectedWords: ingested.words.length ? ingested.words : undefined,
-          }));
+          patchMessage((prev) => {
+            // 思考内容只做展示，不能带系统块标记泄漏到界面；空串一律归一为 undefined
+            const cleanedReasoning = prev.reasoning
+              ? stripSystemBlocks(prev.reasoning).trim().slice(0, MAX_REASONING_CHARS)
+              : '';
+            return {
+              ...prev,
+              content: sanitizedText,
+              tokens: msgTokens,
+              reasoning: cleanedReasoning || undefined,
+              reasoningMs:
+                reasoningDurationMs ||
+                (cleanedReasoning ? Math.max(0, Date.now() - (reasoningStartedAt || Date.now())) : undefined),
+              collectedGrammar: ingested.grammars.length ? ingested.grammars : undefined,
+              collectedWords: ingested.words.length ? ingested.words : undefined,
+            };
+          });
           setIsLoading(false);
           setGeneratingMessageId(null);
 
           // 达成指定轮次（默认第5轮）后自动提取3个话题关键词作为副标题
           const autoRound = typeof settings.subtitleAutoRound === 'number' ? settings.subtitleAutoRound : 5;
           if (autoRound > 0) {
-            const currentSess = sessions.find((s) => s.id === currentSessionId);
+            const currentSess = sessions.find((s) => s.id === effSessionId);
             if (currentSess && !currentSess.subtitle) {
               const fullHistoryForRoundCount = currentSess.messages.map((m) =>
                 m.id === targetAiMsgId ? { ...m, content: sanitizedText } : m
               );
               const completedTurns = countCompletedTurns(fullHistoryForRoundCount);
               if (completedTurns >= autoRound) {
-                generateSessionSubtitle(currentSessionId);
+                generateSessionSubtitle(effSessionId);
               }
             }
           }
@@ -295,7 +364,7 @@ export function App() {
           console.error('LLM Error:', err);
           if (err.name === 'AbortError') {
             // 用户主动停止：保留已生成内容，仅追加停止标记
-            updateMessage(targetAiMsgId, (prev) => {
+            patchMessage((prev) => {
               const content = prev.content || '';
               const stopped = content.trim()
                 ? `${content.replace(/\s+$/, '')}\n\n（已停止生成）`
@@ -306,10 +375,16 @@ export function App() {
             setGeneratingMessageId(null);
             return;
           }
-          updateMessage(targetAiMsgId, (prev) => ({
-            ...prev,
-            content: `【连接提示】请求遇到问题：${err.message}。\n请点击右上角「设置」检查 API Key 与 Base URL，或者在未填 Key 时体验内置离线演示对话。`,
-          }));
+          patchMessage((prev) => {
+            const rawErr = err?.message || String(err);
+            const content = rawErr.startsWith('【连接提示】')
+              ? rawErr
+              : `【连接提示】请求遇到问题：${rawErr}。\n请点击右上角「设置」检查 API Key 与 Base URL，排查网络连接后重试。`;
+            return {
+              ...prev,
+              content,
+            };
+          });
           setIsLoading(false);
           setGeneratingMessageId(null);
         },
@@ -463,6 +538,168 @@ export function App() {
     });
   };
 
+  // ————————————————————————————————————————————————————————————
+  // 课表 / 课时（Lesson）
+  // ————————————————————————————————————————————————————————————
+
+  /**
+   * 开始下一课：A 段本地排课（零 token、确定性）→ B 段让老师备课生成教材。
+   *
+   * 两段都不动学生的对话框：A 段只写课表，B 段只往课时里填教材，界面上的反馈是
+   * 课时卡片上的「备课中… → 教材已就绪」。学生想上课，得自己点某一步。
+   */
+  const handleStartNextLesson = (focus?: Lesson['focus']) => {
+    const lesson = planNextCourseLesson(focus ? { focus } : undefined);
+    handlePrepareLesson(lesson);
+    return lesson;
+  };
+
+  /**
+   * 备课（或重备）：教材生成失败、或想换一版教材时重跑。
+   *
+   * 【备课是老师的幕后工作，不进学生的对话框】——上一版把备课结果流式写进了上课会话，
+   * 结果一心三用：① 备课文稿本身就在"开课"，学生随后点「热身唤醒」又听一遍同样的开场；
+   * ② 备课文稿会走知识采集，把本课新词提前收进生词本，于是"新词已入本"这个采证通道
+   * 在真正讲课之前就亮了，词汇步骤白送一个完成；③ 会话里凭空多出两条助手发言，
+   * 实战演练的"说了几个来回"被凑够。所以这里改用裸流式调用：只要教材，不留痕迹。
+   */
+  const handlePrepareLesson = (lesson: Lesson) => {
+    const brief = buildLessonPrepBrief({
+      lesson,
+      profile,
+      settings,
+      learnedWordCount: learnedWords.length,
+      learnedGrammarCount: learnedGrammar.length,
+    });
+
+    setIsLoading(true);
+    setGeneratingMessageId(null);
+
+    // 备课指令与产出都不落气泡：学生看到的是「老师正在备课…」，看不到任务书和草稿。
+    // 本轮强制 tutor 模式——roleplay 模式的系统提示会要求"从第一条起就完全入戏"，
+    // 那是在上课，不是在备课。
+    sendChatMessageStream(
+      [{ id: `prep-brief-${lesson.id}`, role: 'user', content: brief, timestamp: Date.now(), mode: 'tutor' }],
+      'tutor',
+      profile,
+      settings,
+      undefined,
+      {
+        onControllerReady: (controller) => {
+          abortControllerRef.current = controller;
+        },
+        // 备课不展示过程，增量直接丢弃；只留 onDone 的完整文本做解析
+        onChunk: () => {},
+        onDone: (fullText) => {
+          const payload = parseLessonBlock(fullText);
+          if (payload) {
+            applyLessonMaterial(lesson.id, payload);
+          } else if (!settings.apiKey?.trim()) {
+            // 备课不再落气泡，离线兜底文案也就看不到了，这里必须把"去配 Key"说清楚
+            failLessonMaterial(lesson.id, '还没配置 API Key：点右上角「设置」填好后即可备课');
+          } else {
+            // 失败原因会直接渲染在课时卡片上，所以写学生看得懂的话
+            failLessonMaterial(lesson.id, '老师这次没能给出教材，可以点「重新备课」再试一次');
+          }
+          setIsLoading(false);
+          setGeneratingMessageId(null);
+        },
+        onError: (err) => {
+          failLessonMaterial(
+            lesson.id,
+            err?.name === 'AbortError'
+              ? '备课中断了，可以点「重新备课」再试一次'
+              : '备课没能完成，检查网络后可以点「重新备课」再试一次'
+          );
+          setIsLoading(false);
+          setGeneratingMessageId(null);
+        },
+      },
+      { words: learnedWords, grammar: learnedGrammar },
+      sessions,
+      currentSessionId
+    );
+  };
+
+  /**
+   * 执行课时里的某一步。
+   *
+   * 这是与旧「打勾清单」最本质的差别：每一步都必须能真的点开并产生教学行为。
+   * 旧的 `DailyTask` 只有一个没有任何代码消费的 `target` 字符串，点击只做 toggle + 放彩带。
+   */
+  const handleExecuteLessonStep = (lesson: Lesson, step: LessonStep) => {
+    const action = step.action;
+
+    // 闪卡 / 复习：交给学情档案弹窗，作答结果由 recordReviewResult 采证
+    if (action.type === 'review' || action.type === 'flashcard') {
+      setKnowledgeModalTab(action.type === 'flashcard' ? 'vocab' : action.tab || 'vocab');
+      setKnowledgeModalOpen(true);
+      return;
+    }
+
+    const scenario = action.scenarioId ? findScenarioById(action.scenarioId) : undefined;
+
+    // 同一课的多步共享一个会话，上下文才连贯
+    let sessionId = lesson.sessionId;
+    const sessionExists = !!sessionId && sessions.some((s) => s.id === sessionId);
+    if (!sessionExists) {
+      // quiet：上课会话不做情景预演。第一句台词该由实战演练那一步说出来，
+      // 而不是由会话开场消息替老师先念掉（否则模型会顺着这条"被截断的情景提示"续写，
+      // 把同一段开场白再写一遍）。
+      const created = createNewSession(scenario ? 'roleplay' : action.mode, scenario, lesson.title, {
+        quiet: true,
+      });
+      sessionId = created.id;
+    } else {
+      switchSession(sessionId!);
+    }
+    // switchSession 会按会话记录回填模式与情景，所以放在覆盖之前
+    setCurrentMode(action.mode);
+    if (scenario) setCurrentScenario(scenario);
+    attachLessonSession(lesson.id, sessionId!);
+
+    const priorMessages = sessionExists
+      ? (sessions.find((s) => s.id === sessionId)?.messages || []).filter((m) => m.content.trim().length > 0)
+      : [];
+
+    const targetAiMsgId = `msg-lesson-step-${step.id}-${Date.now()}`;
+    addMessage(
+      {
+        id: targetAiMsgId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        mode: action.mode,
+        scenarioId: scenario?.id,
+        lessonId: lesson.id,
+      },
+      sessionId!
+    );
+
+    // 同一步第二次起改发"接着上"的指令：重发开课指令会让老师把整节课重头讲一遍
+    const seed = step.startedAt ? continueSeedFor(step) : action.seedPrompt;
+    startLessonStep(lesson.id, step.id);
+
+    // 步骤指令同样不落气泡：老师直接开讲，学生看到的是"上课"而不是"我给老师下的指令"
+    executeStreamChat(
+      [...priorMessages, { id: `seed-${step.id}`, role: 'user', content: seed, timestamp: Date.now(), mode: action.mode }],
+      targetAiMsgId,
+      { sessionId: sessionId!, mode: action.mode, scenario }
+    );
+
+    // 上完课要能立刻看到老师讲了什么——留在课表里学生只会以为"点了没反应"，
+    // 于是再点一次同一步骤（重复触发的一个真实来源）。
+    setPlanModalOpen(false);
+  };
+
+  /** 学生自评完成某一步（只对热身 / 收束这类没有自动采证通道的步骤开放） */
+  const handleMarkLessonStepDone = (lessonId: string, stepId: string) => {
+    completeLessonStepManually(lessonId, stepId);
+  };
+
+  /** 删除一课；`resetCourse` 清空整张课表（生词本与学情档案不受影响） */
+  const handleRemoveLesson = (lessonId: string) => removeLesson(lessonId);
+
   // Dynamic Ruby style calculation (custom font ratio & color)
   const rubyColorValue = (() => {
     const choice = settings.rubyColor || 'theme';
@@ -537,6 +774,7 @@ export function App() {
         ttsRate={settings.ttsRate}
         learnedWords={learnedWords}
         furiganaHideMastered={settings.furiganaHideMastered !== false}
+        externalDictSource={settings.externalDictSource || 'moji'}
         themeColor={settings.themeColor || 'sakura'}
         rubyColor={rubyColorValue}
         onSaveWord={addLearnedWord}
@@ -571,7 +809,7 @@ export function App() {
             messages={messages}
             furiganaMode={settings.furiganaMode}
             pitchDisplayMode={settings.pitchDisplayMode}
-            ttsRate={settings.ttsRate}
+            ttsRate={settings.ttsRate ?? 1.0}
             currentMode={currentMode}
             scenario={currentScenario}
             onScenarioChange={handleScenarioChange}
@@ -594,6 +832,7 @@ export function App() {
               setKnowledgeHighlightTarget(targetWord || null);
               setKnowledgeModalOpen(true);
             }}
+            deepThinkingEnabled={(settings.deepThinkingMode || 'auto') !== 'off'}
           />
 
           <InputArea
@@ -630,10 +869,16 @@ export function App() {
           profile={profile}
           setProfile={setProfile}
           plan={plan}
-          setPlan={setPlan}
-          toggleTask={toggleTaskCompleted}
+          progress={progress}
+          axes={axes}
           settings={settings}
-          messages={messages}
+          isBusy={isLoading}
+          onStartNextLesson={handleStartNextLesson}
+          onPrepareLesson={handlePrepareLesson}
+          onExecuteStep={handleExecuteLessonStep}
+          onMarkStepDone={handleMarkLessonStepDone}
+          onRemoveLesson={handleRemoveLesson}
+          onResetCourse={resetCourse}
         />
 
         <KanaModal
@@ -674,6 +919,11 @@ export function App() {
           onDeletePreset={deletePersonaPreset}
           onExportPresets={exportPersonaPresets}
           onImportPresets={importPersonaPresets}
+          apiProfiles={apiProfiles}
+          onSaveApiProfile={saveApiProfile}
+          onApplyApiProfile={applyApiProfile}
+          onDeleteApiProfile={deleteApiProfile}
+          onRenameApiProfile={renameApiProfile}
           learnedWordsCount={learnedWords.length}
           learnedGrammarCount={learnedGrammar.length}
           sessionsCount={sessions.length}

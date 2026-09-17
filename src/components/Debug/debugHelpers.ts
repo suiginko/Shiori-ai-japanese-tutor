@@ -293,7 +293,7 @@ export function buildMarkdownReport(entry: DebugLogEntry): string {
     lines.push('## 运行时学情快照');
     lines.push('');
     lines.push(
-      `- 学习者：${s.userName}（${s.userLevel}），私教：${s.tutorName}，累计会话 ${s.totalSessionsCount}`
+      `- 学习者：${s.userName}（${s.userLevel}），老师：${s.tutorName}，累计会话 ${s.totalSessionsCount}`
     );
     lines.push(
       `- 生词：初学 ${s.learnedWordsCount.learning} / 温习 ${s.learnedWordsCount.reviewing} / 已掌握 ${s.learnedWordsCount.mastered}（共 ${s.learnedWordsCount.total}）`

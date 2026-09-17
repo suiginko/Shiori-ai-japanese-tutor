@@ -83,7 +83,7 @@ const TAB_KEYS: TabKey[] = ['prompt', 'output', 'request', 'state'];
 const OUTPUT_VIEWS: OutputView[] = ['raw', 'clean', 'diff'];
 
 const TYPE_META: Record<string, { label: string; short: string }> = {
-  chat: { label: '私教流式对话', short: '对话' },
+  chat: { label: '老师流式对话', short: '对话' },
   dictionary: { label: 'AI 权威查词', short: '查词' },
   plan: { label: '学情计划规划', short: '计划' },
 };
@@ -1421,7 +1421,7 @@ export function DebugInspector() {
                             <strong>{selectedLog.stateSnapshot.userName}</strong>
                           </div>
                           <div className="debug-state-row">
-                            <span>私教名称</span>
+                            <span>老师名称</span>
                             <strong>{selectedLog.stateSnapshot.tutorName}</strong>
                           </div>
                           <div className="debug-state-row">

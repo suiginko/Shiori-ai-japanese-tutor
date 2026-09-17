@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import { GRAMMAR_POINTS } from '../../data/grammarPoints';
 import { UserLevel } from '../../types';
 import { RubyText } from '../Chat/RubyText';
-import { X, Search, BookOpen, Volume2 } from 'lucide-react';
-import { speechService } from '../../services/speechService';
+import { X, Search, BookOpen } from 'lucide-react';
 
 interface GrammarLibraryModalProps {
   isOpen: boolean;
@@ -94,13 +93,6 @@ export const GrammarLibraryModal: React.FC<GrammarLibraryModalProps> = ({ isOpen
                         </div>
                         <div className="example-cn-row">
                           <span className="example-cn">{ex.cn}</span>
-                          <button
-                            className="example-speak-btn"
-                            onClick={() => speechService.speak(ex.reading || ex.jp, 1.0)}
-                            title="朗读"
-                          >
-                            <Volume2 size={13} />
-                          </button>
                         </div>
                       </div>
                     ))}

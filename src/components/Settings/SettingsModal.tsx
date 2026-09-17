@@ -1,7 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   ApiSettings,
   ApiProvider,
+  ApiProfile,
+  DeepThinkingMode,
   ThemeMode,
   ThemeColor,
   AppFontFamily,
@@ -12,6 +14,7 @@ import {
   BubbleDensity,
   SubtitleSeparatorType,
   PersonaPreset,
+  ExternalDictSource,
 } from '../../types';
 import { RubyText } from '../Chat/RubyText';
 import { ImageCropperModal } from './ImageCropperModal';
@@ -22,7 +25,6 @@ import {
   Key,
   Zap,
   Check,
-  Volume2,
   ShieldCheck,
   Palette,
   Sun,
@@ -48,15 +50,16 @@ import {
   Database,
   HardDriveDownload,
   HardDriveUpload,
+  BookOpen,
   CheckCircle2,
   AlertTriangle,
   CheckCheck,
   Search,
   MessageSquare,
   Edit2,
+  Brain,
 } from 'lucide-react';
 import { ShioriBackupData } from '../../types';
-import { speechService } from '../../services/speechService';
 import { formatSubtitleWithTopics, getSeparatorString } from '../../utils/subtitleHelper';
 
 interface SettingsModalProps {
@@ -70,6 +73,12 @@ interface SettingsModalProps {
   onDeletePreset?: (presetId: string) => void;
   onExportPresets?: () => string;
   onImportPresets?: (jsonStr: string) => { success: boolean; count: number; error?: string };
+  // 多套 API 连接配置档案（保存当前 / 一键切换 / 删除 / 重命名）
+  apiProfiles?: ApiProfile[];
+  onSaveApiProfile?: (name: string, source?: ApiSettings) => ApiProfile;
+  onApplyApiProfile?: (profileId: string) => void;
+  onDeleteApiProfile?: (profileId: string) => void;
+  onRenameApiProfile?: (profileId: string, name: string) => void;
   // Backup & Multi-device Sync Props
   learnedWordsCount?: number;
   learnedGrammarCount?: number;
@@ -206,6 +215,44 @@ const PERSONA_PRESETS = [
   { title: '⚡ 元气同好', text: '热爱动漫与日本文化的同好，活力满满，结合ACG文化趣味讲解' },
 ];
 
+const EXTERNAL_DICT_OPTIONS: Array<{
+  id: ExternalDictSource;
+  name: string;
+  tag?: string;
+  desc: string;
+}> = [
+  {
+    id: 'moji',
+    name: 'MOJi 辞书',
+    tag: '推荐',
+    desc: '国内年轻一代首选日汉词典，现代排版、地道例句、考级标签与活用形解析详尽',
+  },
+  {
+    id: 'hujiang',
+    name: '沪江小D',
+    tag: '经典日汉',
+    desc: '经典日汉大辞典词库，动词变形智能还原与中文释义详尽，直连稳定飞快',
+  },
+  {
+    id: 'weblio_cjjc',
+    name: 'Weblio 日汉',
+    tag: '白水社',
+    desc: 'Weblio 日中·中日权威辞典，收录白水社日中大辞典，权威日汉互译',
+  },
+  {
+    id: 'weblio_jp',
+    name: 'Weblio 日日',
+    tag: '国语原版',
+    desc: '日本原版国语辞典，全日文权威释义与语源考证，适合中高阶实战研读',
+  },
+  {
+    id: 'youdao',
+    name: '网易有道',
+    tag: '双语直连',
+    desc: '国内综合大词典，中日双向释义与网络衍生用例，国内网络直连极速',
+  },
+];
+
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
@@ -217,6 +264,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onDeletePreset,
   onExportPresets,
   onImportPresets,
+  apiProfiles = [],
+  onSaveApiProfile,
+  onApplyApiProfile,
+  onDeleteApiProfile,
+  onRenameApiProfile,
   learnedWordsCount = 0,
   learnedGrammarCount = 0,
   sessionsCount = 0,
@@ -280,6 +332,59 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [showSavePresetBox, setShowSavePresetBox] = useState(false);
   const [newPresetTitle, setNewPresetTitle] = useState('');
   const [newPresetDesc, setNewPresetDesc] = useState('');
+
+  // API 连接配置档案状态（保存当前 / 切换 / 重命名 / 删除）
+  const [newApiProfileName, setNewApiProfileName] = useState('');
+  const [apiProfileToast, setApiProfileToast] = useState('');
+  const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null);
+  const [renamingProfileName, setRenamingProfileName] = useState('');
+
+  /**
+   * 当前表单与哪一套档案完全吻合（用于在列表中打上「使用中」徽章）。
+   * 比对连接四要素：供应商 / 地址 / 模型 / 密钥——只比前三个会让"同地址同模型但换了 Key"的两套配置互相误判。
+   */
+  const activeApiProfileId = useMemo(() => {
+    const hit = apiProfiles.find(
+      (item) =>
+        item.provider === formData.provider &&
+        (item.baseUrl || '') === (formData.baseUrl || '') &&
+        (item.model || '') === (formData.model || '') &&
+        (item.apiKey || '') === (formData.apiKey || '')
+    );
+    return hit?.id;
+  }, [apiProfiles, formData.provider, formData.baseUrl, formData.model, formData.apiKey]);
+
+  const flashApiProfileToast = (msg: string) => {
+    setApiProfileToast(msg);
+    setTimeout(() => setApiProfileToast(''), 2600);
+  };
+
+  /** 保存当前连接配置为档案（未填名称时自动按「供应商 + 模型」兜底命名） */
+  const handleSaveApiProfile = () => {
+    if (!onSaveApiProfile) return;
+    const fallbackName = `${PROVIDER_PRESETS[formData.provider]?.name || formData.provider} · ${formData.model || '默认模型'}`;
+    const name = newApiProfileName.trim() || fallbackName;
+    onSaveApiProfile(name, formData);
+    setNewApiProfileName('');
+    flashApiProfileToast(`✅ 已保存配置档案「${name}」`);
+  };
+
+  /**
+   * 把档案的连接字段写入本地表单。
+   * store 的 applyApiProfile 只改全局 settings，表单是独立的受控副本，
+   * 必须同步一次，否则界面还显示旧供应商，用户会以为没切换成功。
+   */
+  const applyProfileToForm = (profile: ApiProfile) => {
+    setFormData((prev) => ({
+      ...prev,
+      provider: profile.provider,
+      baseUrl: profile.baseUrl,
+      apiKey: profile.apiKey,
+      model: profile.model,
+      temperature: profile.temperature,
+      deepThinkingMode: profile.deepThinkingMode || 'auto',
+    }));
+  };
 
   // Image cropper state
   const [cropperState, setCropperState] = useState<{
@@ -434,7 +539,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           isOpen: true,
           target,
           imageSrc: dataUrl,
-          title: target === 'ai' ? '裁剪 AI 私教圆形头像' : '裁剪用户圆形头像',
+          title: target === 'ai' ? '裁剪 AI 老师圆形头像' : '裁剪用户圆形头像',
         });
       }
     };
@@ -452,7 +557,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       onSave(updated);
       return updated;
     });
-    setPresetToast(`✅ ${cropperState.target === 'ai' ? '私教' : '用户'}圆形头像已裁剪并即刻应用生效！`);
+    setPresetToast(`✅ ${cropperState.target === 'ai' ? '老师' : '用户'}圆形头像已裁剪并即刻应用生效！`);
     setTimeout(() => setPresetToast(''), 3000);
   };
 
@@ -498,10 +603,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     if (onSavePreset) {
       onSavePreset({
         title: newPresetTitle.trim(),
-        description: newPresetDesc.trim() || '自定义私教个性化预设',
+        description: newPresetDesc.trim() || '自定义老师个性化预设',
         aiTutorName: formData.aiTutorName || 'Shiori AI',
         userName: formData.userName || '学习者',
-        aiPersona: formData.aiPersona || '温柔耐心的日语音声私教老师',
+        aiPersona: formData.aiPersona || '温柔耐心的日语音声老师',
         aiFirstPerson: formData.aiFirstPerson || aiFirstPersonJp,
         aiFirstPersonJp,
         aiFirstPersonCn,
@@ -554,10 +659,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     reader.readAsText(file);
     e.target.value = '';
     setTimeout(() => setPresetToast(''), 3500);
-  };
-
-  const handleTestTTS = () => {
-    speechService.speak('こんにちは！これは発音テストです。一緒に勉強しましょう！', formData.ttsRate);
   };
 
   const previewRubyColor = (() => {
@@ -676,7 +777,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onClick={() => setActiveTab('persona')}
           >
             <User size={16} />
-            <span className="tab-text-full">私教与人设定制</span>
+            <span className="tab-text-full">老师与人设定制</span>
             <span className="tab-text-short">人设定制</span>
           </button>
           <button
@@ -702,9 +803,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             className={`settings-tab-btn ${activeTab === 'preferences' ? 'active' : ''}`}
             onClick={() => setActiveTab('preferences')}
           >
-            <Volume2 size={16} />
-            <span className="tab-text-full">朗读与辅助功能</span>
-            <span className="tab-text-short">朗读辅助</span>
+            <Sliders size={16} />
+            <span className="tab-text-full">阅读与辅助功能</span>
+            <span className="tab-text-short">阅读辅助</span>
           </button>
           <button
             type="button"
@@ -727,7 +828,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="group-heading-between">
                   <div className="group-heading-left">
                     <User size={18} className="heading-icon" />
-                    <span className="heading-text">角色名称与私教人设定制</span>
+                    <span className="heading-text">角色名称与老师人设定制</span>
                   </div>
                   <div className="preset-action-bar">
                     <button
@@ -881,7 +982,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {/* AI Tutor Avatar */}
                   <div className="avatar-config-card">
                     <div className="avatar-card-title">
-                      <span>私教圆形头像</span>
+                      <span>老师圆形头像</span>
                       <span className="sub-tag">支持自由裁剪 / 置空默认</span>
                     </div>
                     <div className="avatar-preview-action-row">
@@ -1011,7 +1112,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="grid-two-inputs" style={{ marginTop: '14px' }}>
                   <div className="form-group">
                     <label className="form-label">
-                      <span>私教名字</span>
+                      <span>老师名字</span>
                       <span className="label-subtip">（支持注音如 {'{薫子[かおるこ]}'}）</span>
                     </label>
                     <input
@@ -1042,10 +1143,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="form-group" style={{ marginTop: '16px' }}>
                   <label className="form-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                     <span style={{ fontSize: '0.96rem', fontWeight: 'normal', color: 'var(--text-primary)' }}>
-                      🎭 私教人设性格与教学风格定位
+                      🎭 老师人设性格与教学风格定位
                     </span>
                     <span className="label-subtip" style={{ color: 'var(--primary)', fontWeight: 'normal', fontSize: '0.82rem' }}>
-                      （置空默认：亲切温柔的AI日语私教）
+                      （置空默认：亲切温柔的AI日语老师）
                     </span>
                   </label>
                   <div className="persona-chips-row" style={{ marginBottom: '10px' }}>
@@ -1072,7 +1173,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       resize: 'vertical',
                     }}
                     value={formData.aiPersona || ''}
-                    placeholder="在此自由定制私教的人设性格、教学风格、互动语气或特殊口吻（支持使用 {原文[读音]} 标注特定称呼或角色读音）..."
+                    placeholder="在此自由定制老师的人设性格、教学风格、互动语气或特殊口吻（支持使用 {原文[读音]} 标注特定称呼或角色读音）..."
                     onChange={(e) => setFormData({ ...formData, aiPersona: e.target.value })}
                   />
                   <span className="form-tip" style={{ marginTop: '8px', display: 'block', color: 'var(--text-muted)' }}>
@@ -1541,7 +1642,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
 
                     <p className="preview-tip-text">
-                      注：此预览区域 1:1 模拟真实对话界面（含私教头像、发送者信息与气泡外形），直观联动字号、振假名比例、行距及气泡内边距。
+                      注：此预览区域 1:1 模拟真实对话界面（含老师头像、发送者信息与气泡外形），直观联动字号、振假名比例、行距及气泡内边距。
                     </p>
                   </div>
                 </div>
@@ -1807,7 +1908,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
                 <div className="range-labels">
                   <span>严谨准确 (0.2)</span>
-                  <span>推荐私教 (0.7)</span>
+                  <span>推荐老师 (0.7)</span>
                   <span>发散创意 (1.2)</span>
                 </div>
               </div>
@@ -1836,7 +1937,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <label className="form-label">跨会话记忆与学情动态追踪：</label>
                   <span className="value-badge">
                     {formData.crossSessionMemoryMode === 'deep'
-                      ? '🧠 深度私教 (+250 tok)'
+                      ? '🧠 深度老师 (+250 tok)'
                       : formData.crossSessionMemoryMode === 'off'
                       ? '🔒 单会话独立 (0 tok)'
                       : '🌟 标准轻量 (+100 tok)'}
@@ -1860,7 +1961,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     onClick={() => setFormData({ ...formData, crossSessionMemoryMode: 'deep' })}
                   >
                     <div className="memory-mode-card-header">
-                      <span className="memory-mode-title">🧠 深度私教</span>
+                      <span className="memory-mode-title">🧠 深度老师</span>
                       <span className="memory-mode-cost">约 +250 tok</span>
                     </div>
                     <div className="memory-mode-desc">备考冲刺推荐。包含更早的课堂脉络与大跨度词库追踪，沉浸感更强。</div>
@@ -1878,43 +1979,230 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </button>
                 </div>
                 <span className="form-tip">
-                  基于智能胶囊压缩机制，以极低 Token 代价让 AI 具备真人私教般的长期成长陪伴感与前后连贯性。
+                  基于智能胶囊压缩机制，以极低 Token 代价让 AI 具备真人老师般的长期成长陪伴感与前后连贯性。
                 </span>
+              </div>
+
+              {/* Deep Thinking (Reasoning Chain) */}
+              <div className="form-group">
+                <div className="label-with-value">
+                  <label className="form-label">深度思考（推理过程）：</label>
+                  <span className="value-badge">
+                    {formData.deepThinkingMode === 'on'
+                      ? '🧠 强制开启'
+                      : formData.deepThinkingMode === 'off'
+                      ? '🚫 已关闭'
+                      : '🌟 自动（推荐）'}
+                  </span>
+                </div>
+                <div className="memory-mode-grid">
+                  <button
+                    type="button"
+                    className={`memory-mode-card ${(formData.deepThinkingMode || 'auto') === 'auto' ? 'active' : ''}`}
+                    onClick={() => setFormData({ ...formData, deepThinkingMode: 'auto' })}
+                  >
+                    <div className="memory-mode-card-header">
+                      <span className="memory-mode-title">🌟 自动</span>
+                    </div>
+                    <div className="memory-mode-desc">不注入额外参数。模型自己会思考（如 deepseek-reasoner）就展示，兼容性最好。</div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`memory-mode-card ${formData.deepThinkingMode === 'on' ? 'active' : ''}`}
+                    onClick={() => setFormData({ ...formData, deepThinkingMode: 'on' })}
+                  >
+                    <div className="memory-mode-card-header">
+                      <span className="memory-mode-title">🧠 强制开启</span>
+                    </div>
+                    <div className="memory-mode-desc">按供应商接口主动索取推理过程，回答更严谨，但更慢、更费 token。</div>
+                  </button>
+                  <button
+                    type="button"
+                    className={`memory-mode-card ${formData.deepThinkingMode === 'off' ? 'active' : ''}`}
+                    onClick={() => setFormData({ ...formData, deepThinkingMode: 'off' })}
+                  >
+                    <div className="memory-mode-card-header">
+                      <span className="memory-mode-title">🚫 关闭</span>
+                    </div>
+                    <div className="memory-mode-desc">不请求也不展示推理链，对话最快、最省 token，界面不会出现思考区块。</div>
+                  </button>
+                </div>
+                <span className="form-tip">
+                  {(() => {
+                    const mode = formData.deepThinkingMode || 'auto';
+                    const model = (formData.model || '').toLowerCase();
+                    if (mode === 'off') return '思考过程既不请求也不展示，纯粹追求响应速度。';
+                    if (mode === 'auto') return '尊重模型默认行为：推理型模型会主动输出思考过程并自动展示，普通模型则不会。';
+                    switch (formData.provider) {
+                      case 'gemini':
+                        return '将通过 thinkingConfig.includeThoughts 向 Gemini 索取思考摘要；若模型不支持会自动降级重试，不会影响正常对话。';
+                      case 'qwen':
+                        return '将通过 enable_thinking 开启通义千问的深度思考（流式模式下生效）。';
+                      case 'siliconflow':
+                        return '将通过 enable_thinking 开启推理，适用于硅基流动上的 DeepSeek / Qwen 系列模型。';
+                      case 'openai':
+                        return /^(o[1-9]|gpt-5|gpt-4\.1)/.test(model)
+                          ? '将通过 reasoning_effort=medium 请求推理摘要。'
+                          : '当前模型不是 OpenAI 推理系（o 系列 / GPT-5），不会注入参数，建议改用推理模型。';
+                      case 'custom':
+                        return /deepseek|qwen|reason|qwq|r1|glm-4\.\d/i.test(model)
+                          ? '按模型名识别为推理模型，将尝试注入 enable_thinking。'
+                          : '未识别为推理模型，不会注入额外参数，避免触发接口 400 报错。';
+                      case 'deepseek':
+                        return model.includes('reasoner')
+                          ? 'deepseek-reasoner 会主动输出推理链，无需额外参数。'
+                          : 'DeepSeek 的思考过程需搭配 deepseek-reasoner 模型；deepseek-chat 不会返回思考内容。';
+                      default:
+                        return '为兼容性考虑不注入额外参数：只要模型主动返回推理链（如本地 ollama 的 deepseek-r1），就会照实展示。';
+                    }
+                  })()}
+                </span>
+              </div>
+
+              {/* API Connection Profiles (multi-endpoint quick switch) */}
+              <div className="form-group">
+                <div className="label-with-value">
+                  <label className="form-label">API 配置档案（多套接口一键切换）：</label>
+                  <span className="value-badge">{apiProfiles.length} 套已保存</span>
+                </div>
+
+                <div className="api-profile-current">
+                  <div className="api-profile-current-row">
+                    <span className="api-profile-current-name">
+                      {activeApiProfileId
+                        ? `✓ 使用中：${apiProfiles.find((p) => p.id === activeApiProfileId)?.name}`
+                        : '当前为未保存的临时配置'}
+                    </span>
+                  </div>
+                  <span className="api-profile-current-meta">
+                    {PROVIDER_PRESETS[formData.provider]?.name || formData.provider} · {formData.model || '（未填写模型）'}
+                  </span>
+                </div>
+
+                <div className="api-profile-save-row">
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={newApiProfileName}
+                    onChange={(e) => setNewApiProfileName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSaveApiProfile();
+                      }
+                    }}
+                    placeholder="给当前配置起个名字，如「DeepSeek 官方」..."
+                  />
+                  <button type="button" className="api-profile-btn" onClick={handleSaveApiProfile}>
+                    <Plus size={13} />
+                    <span>保存当前</span>
+                  </button>
+                </div>
+
+                {apiProfiles.length === 0 ? (
+                  <div className="api-profile-empty">
+                    还没有保存任何配置。填好上方的供应商 / 地址 / 密钥后点「保存当前」，
+                    之后就能在这里一键切换不同的 API 与模型，无需反复重填。
+                  </div>
+                ) : (
+                  <div className="api-profile-list">
+                    {apiProfiles.map((profile) => {
+                      const isActive = profile.id === activeApiProfileId;
+                      return (
+                        <div key={profile.id} className={`api-profile-item ${isActive ? 'is-active' : ''}`}>
+                          <div className="api-profile-item-main">
+                            {renamingProfileId === profile.id ? (
+                              <input
+                                type="text"
+                                className="form-input"
+                                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+                                value={renamingProfileName}
+                                autoFocus
+                                onChange={(e) => setRenamingProfileName(e.target.value)}
+                                onBlur={() => {
+                                  if (renamingProfileName.trim()) {
+                                    onRenameApiProfile?.(profile.id, renamingProfileName);
+                                  }
+                                  setRenamingProfileId(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    if (renamingProfileName.trim()) {
+                                      onRenameApiProfile?.(profile.id, renamingProfileName);
+                                    }
+                                    setRenamingProfileId(null);
+                                  } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    setRenamingProfileId(null);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <>
+                                <div className="api-profile-item-name">
+                                  <span>{profile.name}</span>
+                                  {isActive && <span className="api-profile-badge">使用中</span>}
+                                </div>
+                                <span className="api-profile-item-desc">
+                                  {PROVIDER_PRESETS[profile.provider]?.name || profile.provider} · {profile.model || '未填模型'} ·{' '}
+                                  {profile.apiKey ? '已配置密钥' : '无密钥'}
+                                  {profile.deepThinkingMode === 'on' ? ' · 深度思考' : ''}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                          <div className="api-profile-item-actions">
+                            <button
+                              type="button"
+                              className="api-profile-btn is-ghost"
+                              title="切换到此配置：只替换 API 连接信息，人设与外观保持不变"
+                              onClick={() => {
+                                onApplyApiProfile?.(profile.id);
+                                applyProfileToForm(profile);
+                                flashApiProfileToast(`🔁 已切换到「${profile.name}」`);
+                              }}
+                            >
+                              <CheckCheck size={13} />
+                              <span>{isActive ? '重新应用' : '切换'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="api-profile-icon-btn"
+                              title="重命名"
+                              onClick={() => {
+                                setRenamingProfileId(profile.id);
+                                setRenamingProfileName(profile.name);
+                              }}
+                            >
+                              <Edit2 size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              className="api-profile-icon-btn is-danger"
+                              title="删除此配置档案"
+                              onClick={() => onDeleteApiProfile?.(profile.id)}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <span className="form-tip">
+                  档案只保存「供应商 / 地址 / 密钥 / 模型 / 温度 / 深度思考策略」，切换时不会改动你的人设、头像与外观偏好。
+                </span>
+                {apiProfileToast && <span className="form-tip">{apiProfileToast}</span>}
               </div>
             </div>
           )}
 
-          {/* ================= TAB 3: PREFERENCES & SPEECH ================= */}
+          {/* ================= TAB 3: PREFERENCES & DISPLAY ================= */}
           {activeTab === 'preferences' && (
             <div className="settings-section-container">
-              {/* TTS Speech Rate */}
-              <div className="form-group">
-                <div className="label-with-value">
-                  <label className="form-label">TTS 语音朗读语速：</label>
-                  <span className="value-badge">{formData.ttsRate}x</span>
-                </div>
-                <div className="tts-control-row">
-                  <input
-                    type="range"
-                    min="0.7"
-                    max="1.3"
-                    step="0.05"
-                    value={formData.ttsRate}
-                    onChange={(e) => setFormData({ ...formData, ttsRate: parseFloat(e.target.value) })}
-                    className="form-range flex-1"
-                  />
-                  <button type="button" className="btn-secondary btn-sm" onClick={handleTestTTS}>
-                    <Volume2 size={14} />
-                    <span>试听发音</span>
-                  </button>
-                </div>
-                <div className="range-labels">
-                  <span>慢速精读 (0.8x)</span>
-                  <span>自然常速 (1.0x)</span>
-                  <span>较快流利 (1.2x)</span>
-                </div>
-              </div>
-
               {/* Furigana Display Mode */}
               <div className="form-group">
                 <label className="form-label">振假名注音默认显示方式：</label>
@@ -1973,6 +2261,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </label>
               </div>
+
+              {/* External Dictionary Source */}
+              <div className="form-group" style={{ marginTop: '16px' }}>
+                <div className="label-with-value">
+                  <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <BookOpen size={15} />
+                    <span>查词小窗外部词典直达目标：</span>
+                  </label>
+                  <span className="value-badge">
+                    {EXTERNAL_DICT_OPTIONS.find((d) => d.id === (formData.externalDictSource || 'moji'))?.name || 'MOJi 辞书'}
+                  </span>
+                </div>
+                <div className="dict-source-grid">
+                  {EXTERNAL_DICT_OPTIONS.map((item) => {
+                    const isSelected = (formData.externalDictSource || 'moji') === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`dict-source-card ${isSelected ? 'active' : ''}`}
+                        onClick={() => setFormData({ ...formData, externalDictSource: item.id })}
+                      >
+                        <div className="dict-source-card-header">
+                          <span className="dict-source-name">{item.name}</span>
+                          {item.tag && <span className="dict-source-tag">{item.tag}</span>}
+                        </div>
+                        <div className="dict-source-desc">{item.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="form-tip">
+                  在对话区点击生词弹出查词小窗时，底部将直达该词典的权威详解页面。默认推荐适合中文母语者的 MOJi 辞书。
+                </span>
+              </div>
             </div>
           )}
 
@@ -2009,7 +2332,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <strong className="stat-val">{sessionsCount || 0} 个</strong>
                   </div>
                   <div className="backup-stat-chip">
-                    <span className="stat-label">私教预设</span>
+                    <span className="stat-label">老师预设</span>
                     <strong className="stat-val">{personaPresets.length} 套</strong>
                   </div>
                 </div>

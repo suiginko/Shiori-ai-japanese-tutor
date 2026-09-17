@@ -1,5 +1,6 @@
 import { ApiSettings, ChatMessage, SubtitleSeparatorType } from '../types';
 import { stripRubyMarkers } from './nameRubyHelper';
+import { shouldUseLocalGeminiProxy, resolveApiEndpoint } from '../services/llmService';
 
 /** 将连接符类型转为实际字符 */
 export function getSeparatorString(type: SubtitleSeparatorType = 'dot', custom?: string): string {
@@ -170,14 +171,14 @@ export async function extractSessionKeywords(
     .slice(-20)
     .map((m) => {
       const cleaned = cleanMessageForTopicExtraction(m.content);
-      return cleaned ? `${m.role === 'user' ? '学生' : '私教'}: ${cleaned.slice(0, 150)}` : '';
+      return cleaned ? `${m.role === 'user' ? '学生' : '老师'}: ${cleaned.slice(0, 150)}` : '';
     })
     .filter(Boolean)
     .join('\n');
 
   if (!conversationSummary) return [];
 
-  const cleanTutor = stripRubyMarkers(settings.aiTutorName || '').replace(/[()（）]/g, ' ').trim() || 'AI私教';
+  const cleanTutor = stripRubyMarkers(settings.aiTutorName || '').replace(/[()（）]/g, ' ').trim() || 'AI老师';
   const cleanUser = stripRubyMarkers(settings.userName || '').replace(/[()（）]/g, ' ').trim() || '学习者';
 
   const prompt = `阅读以下对话，提炼出【恰好3个】代表本次对话核心内容的具体话题关键词。
@@ -188,12 +189,15 @@ ${conversationSummary}
 要求：
 1. 动漫标题感：3个词组合需具备日本轻小说或动漫作品标题般的画面感与趣味感（如“笨蛋·测验·召唤兽”、“新干线·便当·富士山”）。
 2. 实体词约束：提取的必须是3个独立的具体实体名词（2~4字，如“居酒屋”、“生啤酒”、“烤串”），严禁动宾词组（如“居酒屋点餐”）。
-3. 负面排除：严禁出现“日语”、“语法”、“单词”等常见泛词，严禁包含私教（${cleanTutor}）与学生（${cleanUser}）的名字或身份称谓。
+3. 负面排除：严禁出现“日语”、“语法”、“单词”等常见泛词，严禁包含老师（${cleanTutor}）与学生（${cleanUser}）的名字或身份称谓。
 4. 输出格式：仅输出 3~5 个候选词的纯 JSON 字符串数组，例如：["词1", "词2", "词3"]，无任何额外解释或 Markdown 标记。`;
 
   try {
     let rawText = '';
-    if (settings.provider === 'gemini') {
+    const useLocalGeminiProxy = shouldUseLocalGeminiProxy(settings);
+    const endpoint = resolveApiEndpoint(settings);
+
+    if (useLocalGeminiProxy) {
       const res = await fetch('/api/gemini', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -208,14 +212,14 @@ ${conversationSummary}
       const json = await res.json();
       rawText = json.text || '';
     } else {
-      const res = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${settings.apiKey.trim()}`,
         },
         body: JSON.stringify({
-          model: settings.model || 'gpt-4o-mini',
+          model: settings.model || (settings.provider === 'gemini' ? 'gemini-3.6-flash' : 'gpt-4o-mini'),
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.2,
         }),

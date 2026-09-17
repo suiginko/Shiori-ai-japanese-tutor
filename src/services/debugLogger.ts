@@ -229,7 +229,7 @@ class DebugLoggerService {
     const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}.${d.getMilliseconds().toString().padStart(3, '0')}`;
 
     const modeLabels: Record<StudyMode, string> = {
-      tutor: '自适应私教教学',
+      tutor: '自适应老师教学',
       roleplay: '情景沉浸演练',
       correction: '语法纠错与润色',
       assessment: '水平自测与评估',
@@ -244,8 +244,8 @@ class DebugLoggerService {
       timestamp: now,
       timeStr,
       type: 'chat',
-      typeLabel: '私教流式对话',
-      title: params.mode === 'roleplay' && params.scenario ? `情景演练: ${params.scenario.title}` : modeLabels[params.mode] || '智能私教对话',
+      typeLabel: '老师流式对话',
+      title: params.mode === 'roleplay' && params.scenario ? `情景演练: ${params.scenario.title}` : modeLabels[params.mode] || '智能老师对话',
       mode: params.mode,
       modeLabel: modeLabels[params.mode] || params.mode,
       scenarioTitle: params.scenario?.title,

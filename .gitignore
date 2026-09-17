@@ -31,6 +31,10 @@ android/app/src/main/assets/public/
 # Temporary / Scratch files
 scratch/
 .workbuddy/
+_*.txt
+_*.log
+*.out.txt
+*.bak
 
 # Editor & OS files
 .vscode/*

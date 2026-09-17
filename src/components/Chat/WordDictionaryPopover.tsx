@@ -1,6 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
-  Volume2,
   X,
   Bookmark,
   Check,
@@ -15,12 +14,51 @@ import {
   ListTree,
 } from 'lucide-react';
 import { dictionaryService, DictEntry } from '../../services/dictionaryService';
-import { speechService } from '../../services/speechService';
-import { LearnedWord, FavoriteExpression } from '../../types';
+import { LearnedWord, FavoriteExpression, ExternalDictSource } from '../../types';
 import { FuriganaTitle } from '../Common/FuriganaTitle';
-import { parseJapaneseContent } from '../../utils/rubyParser';
+import { parseJapaneseContent, sanitizeAnnotatedText, stripAnnotatedBlockMarks } from '../../utils/rubyParser';
 import type { PendingLookupRequest } from '../../context/DictionaryContext';
 import { DISTINCT_CHINESE_CHAR_REGEX } from '../../utils/languageDetector';
+
+/**
+ * 根据用户配置的外部词典来源生成查词 URL 与展示文本
+ */
+export function getExternalDictConfig(source: ExternalDictSource = 'moji', word: string) {
+  const encoded = encodeURIComponent(word);
+  switch (source) {
+    case 'hujiang':
+      return {
+        name: '沪江小D 详解',
+        url: `https://dict.hjenglish.com/jp/jc/${encoded}`,
+        title: '在 沪江小D 查看权威日汉释义与例句',
+      };
+    case 'weblio_cjjc':
+      return {
+        name: 'Weblio 日汉',
+        url: `https://cjjc.weblio.jp/content/${encoded}`,
+        title: '在 Weblio 日中·中日辞典 查看日汉权威释义',
+      };
+    case 'weblio_jp':
+      return {
+        name: 'Weblio 日日',
+        url: `https://www.weblio.jp/content/${encoded}`,
+        title: '在 Weblio 辞书查看详尽日日释义与语源',
+      };
+    case 'youdao':
+      return {
+        name: '有道词典',
+        url: `https://dict.youdao.com/result?word=${encoded}&lang=ja`,
+        title: '在 有道词典 查看中日双语释义',
+      };
+    case 'moji':
+    default:
+      return {
+        name: 'MOJi 查词',
+        url: `https://www.mojidict.com/search?text=${encoded}`,
+        title: '在 MOJi辞书 查看详尽日汉释义与例句',
+      };
+  }
+}
 
 /**
  * 将软件统一注音串（`{原文[读音]}`）渲染为振假名 ruby，供词典小窗标题使用。
@@ -54,6 +92,31 @@ function renderDictRuby(text: string): React.ReactNode {
       </span>
     );
   });
+}
+
+/**
+ * 词典小窗内所有**日文片段**（标题 / 成分拆解 / 例句）的统一渲染入口。
+ *
+ * 片段自带软件规范注音（`{原文[读音]}`）时渲染振假名；否则抹掉任何残留的系统标记后原样输出——
+ * 小窗是学习者的取景点，绝不允许把 `{` `}` `[` `]` 这类宿主边界符号暴露出去，
+ * 也绝不允许括号内的读音混进正文（`{来[ら]い}ブ` 必须显示为「来(ら)いブ」而不是「来らいブ」）。
+ */
+function renderDictJp(text: string): React.ReactNode {
+  if (!text) return null;
+  const annotated = sanitizeAnnotatedText(text);
+  if (annotated) return renderDictRuby(annotated);
+  return stripAnnotatedBlockMarks(text);
+}
+
+/**
+ * 词典小窗内**中文说明文字**（如用法点拨）的渲染入口。
+ * 与 renderDictJp 的差别在于：只有真的检出规范注音块时才接管渲染，其余一律原样返回，
+ * 免得中文正文里正常的方括号被当成注音剥掉。
+ */
+function renderDictProse(text: string): React.ReactNode {
+  if (!text) return null;
+  const annotated = sanitizeAnnotatedText(text);
+  return annotated ? renderDictRuby(annotated) : text;
 }
 
 /**
@@ -101,6 +164,7 @@ export interface WordDictionaryPopoverProps {
   onRemoveExpression?: (idOrText: string) => void;
   themeColor?: string;
   rubyColor?: string;
+  externalDictSource?: ExternalDictSource;
   anchorEl?: HTMLElement;
   lineEl?: HTMLElement | null;
   bubbleEl?: HTMLElement | null;
@@ -136,6 +200,7 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
   onRemoveExpression,
   themeColor,
   rubyColor,
+  externalDictSource = 'moji',
   onLookupStart,
   onLookupEnd,
 }) => {
@@ -143,8 +208,6 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
   const [currentQueryWord, setCurrentQueryWord] = useState(word);
   const [currentQueryReading, setCurrentQueryReading] = useState(reading);
   const [entry, setEntry] = useState<DictEntry | null>(() => dictionaryService.lookup(word, reading));
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [playingExampleIdx, setPlayingExampleIdx] = useState<number | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -594,40 +657,6 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
 
   const wordIsSaved = isWordLike ? isSaved || !!savedItem : !!savedExpression;
 
-  // 手动点击触发单词发音（绝不自动播放声音）
-  const handleSpeakWord = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!entry) return;
-    setIsPlaying(true);
-    speechService.speak(
-      entry.reading || entry.word,
-      ttsRate,
-      undefined,
-      () => setIsPlaying(true),
-      () => setIsPlaying(false),
-      () => setIsPlaying(false)
-    );
-  };
-
-  // 手动点击触发例句发音
-  const handleSpeakExample = (e: React.MouseEvent, jpText: string, idx: number) => {
-    e.stopPropagation();
-    if (playingExampleIdx === idx) {
-      speechService.stop();
-      setPlayingExampleIdx(null);
-      return;
-    }
-    setPlayingExampleIdx(idx);
-    speechService.speak(
-      jpText,
-      ttsRate,
-      undefined,
-      () => setPlayingExampleIdx(idx),
-      () => setPlayingExampleIdx(null),
-      () => setPlayingExampleIdx(null)
-    );
-  };
-
   // 切换查看辞书原型或当前活用形
   const handleToggleLemma = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -775,16 +804,25 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
           <div className="dict-word-title-group">
             <div className="dict-word-surface-row">
               {isWordLike ? (
-                <FuriganaTitle
-                  surface={displayWord}
-                  reading={entry.reading}
-                  className="dict-word-surface"
-                />
+                /* 单词词头：AI 已给出权威注音串（如 {疲[つか]}れる）时直接渲染振假名，
+                   不再依赖 splitStemAndOkurigana 猜测汉字与送假名的边界；
+                   旧缓存词条没有注音串时，退回原有的算法拆分。 */
+                entry.annotated ? (
+                  <div className="dict-word-surface dict-word-surface-ruby">
+                    {renderDictJp(entry.annotated)}
+                  </div>
+                ) : (
+                  <FuriganaTitle
+                    surface={stripAnnotatedBlockMarks(displayWord)}
+                    reading={entry.reading}
+                    className="dict-word-surface"
+                  />
+                )
               ) : (
                 /* 短语/句型/整句：整段原文作为标题，按软件统一的 {原文[读音]} 语法渲染振假名
                    （AI 未提供逐词注音串时，退化为纯原文 + 独立读音行） */
                 <div className={`dict-query-text kind-${queryKind}`}>
-                  {entry.annotated ? renderDictRuby(entry.annotated) : displayWord}
+                  {renderDictJp(entry.annotated || displayWord)}
                 </div>
               )}
             </div>
@@ -860,16 +898,6 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
               )}
             </button>
 
-            {/* 手动朗读发音按钮 */}
-            <button
-              type="button"
-              className={`dict-speak-btn ${isPlaying ? 'playing' : ''}`}
-              onClick={handleSpeakWord}
-              title="点击播放标准发音（不会自动播放声音）"
-              aria-label="播放发音"
-            >
-              <Volume2 size={15} />
-            </button>
             <button
               type="button"
               className="dict-close-btn"
@@ -955,7 +983,7 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
               <ul className="dict-breakdown-list">
                 {entry.breakdown.map((seg, idx) => (
                   <li key={idx} className="dict-breakdown-item">
-                    <span className="dict-bd-jp">{seg.jp}</span>
+                    <span className="dict-bd-jp">{renderDictJp(seg.jp)}</span>
                     {seg.role && <span className="dict-bd-role">{seg.role}</span>}
                     {seg.zh && <span className="dict-bd-zh">{seg.zh}</span>}
                   </li>
@@ -971,7 +999,7 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
                 <Lightbulb size={12} />
                 <span>{detailTitle}</span>
               </div>
-              <div className="dict-detail-text">{entry.detail}</div>
+              <div className="dict-detail-text">{renderDictProse(entry.detail)}</div>
             </div>
           )}
 
@@ -986,17 +1014,7 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
                 {entry.examples.map((ex, idx) => (
                   <div key={idx} className="dict-example-item">
                     <div className="dict-ex-jp-row">
-                      <span className="dict-ex-jp">{ex.jp}</span>
-                      <button
-                        type="button"
-                        className={`dict-ex-audio-btn ${
-                          playingExampleIdx === idx ? 'playing' : ''
-                        }`}
-                        onClick={(e) => handleSpeakExample(e, ex.jp, idx)}
-                        title="朗读例句"
-                      >
-                        <Volume2 size={11} />
-                      </button>
+                      <span className="dict-ex-jp">{renderDictJp(ex.jp)}</span>
                     </div>
                     <div className="dict-ex-zh">{ex.zh}</div>
                   </div>
@@ -1022,21 +1040,23 @@ export const WordDictionaryPopover: React.FC<WordDictionaryPopoverProps> = ({
               </button>
             )}
 
-            {/* Weblio 外部权威日日/日汉词典直达链接 */}
-            {/* Weblio 外部权威日日/日汉词典直达链接（整句无对应词条，故不展示） */}
-            {!isSentenceLike && (
-              <a
-                href={`https://www.weblio.jp/content/${encodeURIComponent(canonicalWord)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="dict-external-link"
-                title="在 Weblio 辞书查看详尽日日释义与语源"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <span>Weblio 详解</span>
-                <ExternalLink size={10} />
-              </a>
-            )}
+            {/* 外部权威日汉/日日词典直达链接（整句无对应词条，故不展示） */}
+            {!isSentenceLike && (() => {
+              const dictConfig = getExternalDictConfig(externalDictSource, canonicalWord);
+              return (
+                <a
+                  href={dictConfig.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="dict-external-link"
+                  title={dictConfig.title}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <span>{dictConfig.name}</span>
+                  <ExternalLink size={10} />
+                </a>
+              );
+            })()}
           </div>
 
           <span className="dict-hint-tip">

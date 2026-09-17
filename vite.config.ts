@@ -64,6 +64,20 @@ function forwardToGeminiWithCurl(model: string, payload: any, apiKey: string): P
   });
 }
 
+/**
+ * 拆分 Gemini 返回的 candidate.content.parts。
+ * parts 可能同时包含思考分片（thought: true）与正式回答分片；
+ * 旧实现直接取 parts[0].text，一旦首个分片恰好是思考内容，整条回复就变成了"思考过程"，
+ * 因此必须显式分流：非 thought 的拼正文，thought 的拼推理链。
+ */
+function splitGeminiParts(candidate: any): { text: string; reasoning: string } {
+  const parts: any[] = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+  return {
+    text: parts.filter((p) => !p?.thought).map((p) => p?.text || '').join(''),
+    reasoning: parts.filter((p) => p?.thought).map((p) => p?.text || '').join(''),
+  };
+}
+
 function geminiLocalProxyPlugin() {
   return {
     name: 'gemini-local-proxy',
@@ -80,7 +94,7 @@ function geminiLocalProxyPlugin() {
         req.on('end', async () => {
           try {
             const body = JSON.parse(rawBody);
-            let { model = 'gemini-3.1-flash-lite', messages = [], systemInstruction, apiKey } = body;
+            let { model = 'gemini-3.1-flash-lite', messages = [], systemInstruction, apiKey, thinkingConfig } = body;
 
             if (!apiKey) {
               res.statusCode = 200;
@@ -127,8 +141,20 @@ function geminiLocalProxyPlugin() {
             if (systemText) {
               geminiPayload.systemInstruction = { parts: [{ text: systemText }] };
             }
+            // 深度思考：includeThoughts 让模型把思考摘要以 thought:true 的 part 一并返回
+            if (thinkingConfig && typeof thinkingConfig === 'object') {
+              geminiPayload.generationConfig = { thinkingConfig };
+            }
 
-            const result = await forwardToGeminiWithCurl(model, geminiPayload, apiKey);
+            let result = await forwardToGeminiWithCurl(model, geminiPayload, apiKey);
+
+            // 容错：个别模型或上游代理不接受 thinkingConfig（400 参数错误）。
+            // 此时剔除思考配置原样重试一次，保证"开启深度思考"这个开关绝不会反过来把对话打挂。
+            if (result.data?.error && geminiPayload.generationConfig?.thinkingConfig) {
+              const withoutThinking = { ...geminiPayload };
+              delete withoutThinking.generationConfig;
+              result = await forwardToGeminiWithCurl(model, withoutThinking, apiKey);
+            }
 
             if (result.data.error) {
               // If model was experiencing 503 high demand, auto-retry through fallback models
@@ -139,12 +165,13 @@ function geminiLocalProxyPlugin() {
                   const retryResult = await forwardToGeminiWithCurl(fb, geminiPayload, apiKey);
                   if (!retryResult.data.error && retryResult.data.candidates) {
                     const candidate = retryResult.data.candidates[0];
-                    const text = candidate?.content?.parts?.[0]?.text || '';
+                    const { text, reasoning } = splitGeminiParts(candidate);
                     res.statusCode = 200;
                     res.setHeader('Content-Type', 'application/json');
                     res.end(JSON.stringify({
                       success: true,
                       text,
+                      reasoning,
                       tokens: { prompt: 50, completion: Math.ceil(text.length * 1.3), total: 50 + Math.ceil(text.length * 1.3) }
                     }));
                     return;
@@ -160,7 +187,7 @@ function geminiLocalProxyPlugin() {
             }
 
             const candidate = result.data?.candidates?.[0];
-            const text = candidate?.content?.parts?.[0]?.text || '';
+            const { text, reasoning } = splitGeminiParts(candidate);
             const usage = result.data?.usageMetadata || {};
 
             res.statusCode = 200;
@@ -168,6 +195,7 @@ function geminiLocalProxyPlugin() {
             res.end(JSON.stringify({
               success: true,
               text,
+              reasoning,
               tokens: {
                 prompt: usage.promptTokenCount || Math.ceil(rawBody.length * 1.2),
                 completion: usage.candidatesTokenCount || Math.ceil(text.length * 1.3),

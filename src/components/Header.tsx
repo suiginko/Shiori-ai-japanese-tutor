@@ -12,7 +12,7 @@ import {
   EyeOff,
   Activity,
   History,
-  Brain,
+  NotebookTabs,
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -109,8 +109,8 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="brand-info">
             <div className="brand-title">
               <span className="brand-name-text">栞 (Shiori)</span>
-              <span className="brand-title-sub">AI 智能私教</span>
-              <span className="brand-version-badge">v0.1.2</span>
+              <span className="brand-title-sub">AI 智能老师</span>
+              <span className="brand-version-badge">v0.2.0</span>
             </div>
             <span className="brand-tagline">日文自然语言沉浸式伴学系统</span>
           </div>
@@ -159,10 +159,10 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               className="header-icon-btn knowledge-header-btn"
               onClick={onOpenKnowledge}
-              title="查看已学单词与语法记录，开启专项复习与智能闪卡"
+              title="打开笔记本，查看已学单词与语法记录，开启专项复习与智能闪卡"
             >
-              <Brain size={16} />
-              <span className="icon-label">学情档案</span>
+              <NotebookTabs size={16} />
+              <span className="icon-label">笔记本</span>
               {learnedCount > 0 && <span className="history-badge-count knowledge-badge">{learnedCount}</span>}
             </button>
           )}

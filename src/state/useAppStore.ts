@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   UserLearningProfile,
   LearningPlan,
@@ -15,6 +15,7 @@ import {
   RoleplayScenario,
   UserLevel,
   PersonaPreset,
+  ApiProfile,
   ShioriBackupData,
 } from '../types';
 import { ROLEPLAY_SCENARIOS } from '../data/scenarios';
@@ -36,6 +37,26 @@ import {
   formatSubtitleWithTopics,
   extractSessionKeywords,
 } from '../utils/subtitleHelper';
+import {
+  Lesson,
+  LessonMaterialPayload,
+  LessonStep,
+  LessonStepEvidence,
+} from '../types';
+import {
+  planNextLesson,
+  applyLessonEvidence,
+  markStepManually,
+  markStepStarted,
+  countScenarioRounds,
+  mergeLessonMaterial,
+  computeCourseProgress,
+  normalizeLegacyPlan,
+  lessonMinutes,
+  deriveAbilityAxes,
+  resolveFocus,
+  type CourseProgress,
+} from '../services/curriculumPlanner';
 
 const STORAGE_KEYS = {
   PROFILE: 'agy_jp_profile_v1',
@@ -50,6 +71,8 @@ const STORAGE_KEYS = {
   STATS: 'agy_jp_token_stats_v1',
   PERSONA_PRESETS: 'agy_jp_persona_presets_v2',
   PERSONA_PRESETS_LEGACY: 'agy_jp_persona_presets_v1',
+  /** 多套 API 连接配置档案（供应商 / 地址 / 密钥 / 模型 / 温度 / 深度思考策略） */
+  API_PROFILES: 'agy_jp_api_profiles_v1',
 };
 
 export const DEFAULT_PERSONA_PRESETS: PersonaPreset[] = [
@@ -145,18 +168,20 @@ const DEFAULT_PROFILE: UserLearningProfile = {
   notesForAI: '学生对日本美食和旅游很感兴趣，容易把「雨(1)」和「飴(0)」搞混，多提供发音音调指引。',
 };
 
+/**
+ * 课表的出厂状态：**空课表**。
+ *
+ * 旧版这里硬编码了 3 条任务和 `weeklyProgress: 42`——进度条与真实学习量毫无关系，
+ * 属于"编出来的进度"。现在课表由本地排课器依学情现排：没排课就是没排课，
+ * 界面上显示"还没有课表，去排第一课"，而不是拿假进度骗学生。
+ */
 const DEFAULT_PLAN: LearningPlan = {
-  currentStage: 'N5 核心日常会话与生活场景冲刺',
-  todayGoal: '掌握居酒屋/便利店点单核心句式，巩固动词连接式',
-  weeklyProgress: 42,
-  tasks: [
-    { id: 'task-1', title: '完成一次便利店买便当与加热的对话', type: 'dialogue', target: 'convenience_store', completed: false },
-    { id: 'task-2', title: '熟练掌握「～てください」请求句型造句', type: 'grammar', target: 'n5_te_form', completed: true },
-    { id: 'task-3', title: '练习经典声调辨析（雨 vs 飴、箸 vs 橋）', type: 'vocab', target: 'pitch', completed: false },
-  ],
-  suggestedTopics: ['下班后居酒屋点啤酒与烤串', '向电车售票机店员问路', '自我介绍与兴趣交流'],
-  grammarFocus: ['～てください', '～てもいいですか', '～から～まで'],
-  lastUpdated: new Date().toLocaleDateString(),
+  currentStage: '尚未排课',
+  todayGoal: '',
+  suggestedTopics: [],
+  grammarFocus: [],
+  lastUpdated: '',
+  lessons: [],
 };
 
 export const DEFAULT_LEARNED_WORDS: LearnedWord[] = [
@@ -412,6 +437,8 @@ const DEFAULT_SETTINGS: ApiSettings = {
   apiKey: '',
   model: 'gemini-3.6-flash',
   temperature: 0.7,
+  // 默认 'auto'：不主动注入推理参数，但若模型自己吐了推理链就照实展示（对 deepseek-reasoner / QwQ 等开箱即用）
+  deepThinkingMode: 'auto',
 
   // Personalization & Names
   aiTutorName: 'Shiori AI',
@@ -448,6 +475,7 @@ const DEFAULT_SETTINGS: ApiSettings = {
   pitchDisplayMode: 'curve',
   ttsRate: 1.0,
   ttsVoice: '',
+  externalDictSource: 'moji',
   tokenSavingEnabled: true,
   maxHistoryTurns: 16,
   crossSessionMemoryMode: 'standard',
@@ -462,13 +490,13 @@ export const getLevelInitialGreeting = (
 ): string => {
   switch (level) {
     case 'N0':
-      return `你好！我是你的专属AI日语私教【${tutorName}】。
+      return `你好！我是你的专属AI日语老师【${tutorName}】。
 初次见面，在日语中可以说「初[はじ]めまして」。
 零基础不用担心看不懂，我会全程以清晰的中文带你从五十音发音、认读与最基础的生活用语学起。今天你想从假名认读、还是简单实用的生活问候语开始呢？`;
 
     case 'N5':
     default:
-      return `你好！我是你的专属AI日语私教【${tutorName}】。初[はじ]めまして！
+      return `你好！我是你的专属AI日语老师【${tutorName}】。初[はじ]めまして！
 不用担心看不懂，在这里我们以通俗易懂的中文讲解为主，带你轻松掌握生活常用短句。
 今日[きょう]も 一緒[いっしょ]に 楽[たの]しく 日本語[にほんご]を 勉強[べんきょう]しましょう！（今天也一起开心地学日语吧！）你想从哪个话题或者句型开始呢？`;
 
@@ -510,17 +538,27 @@ export const INITIAL_MESSAGES: ChatMessage[] = [
   },
 ];
 
+/**
+ * 新建会话。
+ *
+ * `opts.quiet`：**上课会话专用**。默认建会话时会以「【情景练习：…】+ 情景第一句台词」
+ * 作为开场消息——那是给"直接进情景演练"的会话用的。但课时会话不是那样：
+ * 它的第一句台词该由【实战演练那一步】说出来。若开场就替学生演了第一句，随后
+ * 老师会对着这条"像被截断的情景提示"继续往下写，于是同一段开场白出现两遍。
+ * quiet 模式下开场退化为普通问候，且这条问候不属于任何情景（不计入演练回合）。
+ */
 export const createNewDefaultSession = (
   mode: StudyMode = 'tutor',
   scenario?: RoleplayScenario,
   customTitle?: string,
   level: UserLevel = 'N5',
-  tutorName: string = 'Shiori AI'
+  tutorName: string = 'Shiori AI',
+  opts?: { quiet?: boolean }
 ): ChatSession => {
   let initialContent = getLevelInitialGreeting(level, tutorName);
   let title = customTitle || '新对话';
 
-  if (scenario) {
+  if (scenario && !opts?.quiet) {
     initialContent = `【情景练习：${scenario.title}】\n${scenario.initialMessage}`;
   }
 
@@ -538,7 +576,7 @@ export const createNewDefaultSession = (
         content: initialContent,
         timestamp: Date.now(),
         mode,
-        scenarioId: scenario?.id,
+        scenarioId: opts?.quiet ? undefined : scenario?.id,
         tokens: {
           prompt: 45,
           completion: 120,
@@ -628,7 +666,11 @@ export function useAppStore() {
   const [plan, setPlan] = useState<LearningPlan>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.PLAN);
-      return saved ? JSON.parse(saved) : DEFAULT_PLAN;
+      if (!saved) return DEFAULT_PLAN;
+      // 旧数据里可能只有「打勾清单」而没有课表：normalizeLegacyPlan 会清掉已废弃字段、保留课表。
+      // 它刻意【不】把旧任务硬转成步骤——旧 `target` 没有契约（各生成器写法互不一致且无代码消费），
+      // 硬转只会造出一堆点了没反应的步骤，那正是这次重构要修掉的病。
+      return normalizeLegacyPlan(JSON.parse(saved));
     } catch {
       return DEFAULT_PLAN;
     }
@@ -820,6 +862,47 @@ export function useAppStore() {
     }
   });
 
+  /**
+   * 多套 API 连接配置档案（保存当前 / 一键切换 / 删除）。
+   * 与 personaPresets 一样持久化在 localStorage，但数据面完全独立——
+   * 换 API 不会连带换掉人设，换人设也不会覆盖 API 设置。
+   */
+  const [apiProfiles, setApiProfiles] = useState<ApiProfile[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.API_PROFILES);
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed)) return [];
+      // 清洗历史脏数据：必须有可用名称，且连接三要素（供应商 / 地址 / 模型）至少存在其一
+      return parsed
+        .filter(
+          (p: any) =>
+            p &&
+            typeof p === 'object' &&
+            typeof p.name === 'string' &&
+            p.name.trim().length > 0
+        )
+        .map((p: any) => ({
+          id: typeof p.id === 'string' && p.id ? p.id : `api-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          name: String(p.name).trim().slice(0, 40),
+          provider: (p.provider || 'custom') as ApiProfile['provider'],
+          baseUrl: typeof p.baseUrl === 'string' ? p.baseUrl : '',
+          apiKey: typeof p.apiKey === 'string' ? p.apiKey : '',
+          model: typeof p.model === 'string' ? p.model : '',
+          temperature: typeof p.temperature === 'number' ? p.temperature : 0.7,
+          deepThinkingMode:
+            p.deepThinkingMode === 'off' || p.deepThinkingMode === 'on' || p.deepThinkingMode === 'auto'
+              ? p.deepThinkingMode
+              : 'auto',
+          createdAt: typeof p.createdAt === 'number' ? p.createdAt : Date.now(),
+          updatedAt: typeof p.updatedAt === 'number' ? p.updatedAt : Date.now(),
+        }))
+        .slice(0, 30); // 上限 30 套，防止异常数据撑爆 localStorage
+    } catch {
+      return [];
+    }
+  });
+
   // Modal & Drawer control states
   const [planModalOpen, setPlanModalOpen] = useState(false);
   const [assessmentModalOpen, setAssessmentModalOpen] = useState(false);
@@ -871,6 +954,10 @@ export function useAppStore() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.PERSONA_PRESETS, JSON.stringify(personaPresets));
   }, [personaPresets]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.API_PROFILES, JSON.stringify(apiProfiles));
+  }, [apiProfiles]);
 
   // Derived current session & messages
   const currentSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
@@ -937,8 +1024,25 @@ export function useAppStore() {
   }, []);
 
   // Knowledge Operations
+  /**
+   * 收录一个单词到生词本 / 刷新它的【被动遇见】记录。
+   *
+   * ⚠️ 计数器语义（这是本次重构修掉的一个真实缺陷）：
+   * 本函数【只】累加 `exposureCount`（被动遇见），绝不触碰 `reviewCount` / `lastReviewedAt` / `mastery`。
+   * 旧实现在这里 `reviewCount + 1` 且刷 `lastReviewedAt`，导致两个后果：
+   *   1. 学生在聊天里只是碰到某词两次，就被判为「温习中」并被反复当复习靶标注入提示词；
+   *   2. 课文/回复里顺带提一次，就被当成"刚复习过"，遗忘曲线彻底失效。
+   * 主动测验的唯一入口是 {@link recordReviewResult}。
+   *
+   * 关于长度上限：这里是【用户/对话侧】收录口径（≤8 字），而注入离线分词词典的
+   * `isTrueSingleWordTerm` 是【注音注入侧】口径（≤6 字、无标点、无助词粘连）。
+   * 两者刻意不同：7~8 字的复合词可以进生词本（用户真的收藏了它），但不参与全局分词注入，
+   * 以免污染注音切分。**排课器取材一律按 ≤6 的严格口径**（见 curriculumPlanner），
+   * 所以"课里教的词一定收得进、也一定注得准"。
+   */
+  const MAX_LEARNED_WORD_LENGTH = 8;
   const addLearnedWord = (item: Omit<LearnedWord, 'id' | 'learnedAt' | 'reviewCount' | 'mastery'>) => {
-    if (!item.surface || item.surface.trim().length <= 0 || item.surface.length > 8) return;
+    if (!item.surface || item.surface.trim().length <= 0 || item.surface.length > MAX_LEARNED_WORD_LENGTH) return;
     const cleanSurface = item.surface.trim();
     if (/[，。！？、“”《》；：]/.test(cleanSurface)) return;
     if (/[的地得了着吗吧呢么什哪这那或者并如果因为所以虽然但是可以想去这里那里地方什么]/.test(cleanSurface)) return;
@@ -1016,10 +1120,10 @@ export function useAppStore() {
       );
 
       if (existingSuperset && (!itemMeaningIsValid || isPlaceholderMeaning(resolvedMeaning))) {
-        // 说明当前是残缺碎片，已有完整词存在，绝不录入残缺词，直接刷新已有完整词的学习状态
+        // 说明当前是残缺碎片，已有完整词存在，绝不录入残缺词，只记一次被动遇见
         return prev.map((w) =>
           w.id === existingSuperset.id
-            ? { ...w, reviewCount: w.reviewCount + 1, lastReviewedAt: Date.now() }
+            ? { ...w, exposureCount: (w.exposureCount || 0) + 1, lastExposureAt: Date.now() }
             : w
         );
       }
@@ -1053,24 +1157,21 @@ export function useAppStore() {
       if (existingIdx >= 0) {
         const updated = [...filtered];
         const existing = updated[existingIdx];
-        const nextReviewCount = (existing.reviewCount || 1) + 1;
-        
-        // 智能流转机制：如果原状态为初学 (learning)，多次查阅/学习时自动进阶为复习中 (reviewing)
-        let nextMastery = existing.mastery;
-        if (existing.mastery === 'learning' && nextReviewCount >= 2) {
-          nextMastery = 'reviewing';
-        }
-        
-        // 词条已存在：无缝更新为悬浮窗/AI生成的新版权威释义与用法搭配例句，更新学习进度与复习时间
+
+        // 词条已存在：这是一次【被动遇见】——更新悬浮窗/AI 生成的新版权威释义与例句，
+        // 累加 exposureCount，但【绝不】动 reviewCount / lastReviewedAt / mastery。
+        // 掌握度晋升只认主动测验（recordReviewResult），否则"聊到两次"就等于"学会了"。
         updated[existingIdx] = {
           ...existing,
           ...enrichedItem,
           surface: canonicalSurface,
           id: existing.id,
-          mastery: nextMastery,
+          mastery: existing.mastery,
           learnedAt: existing.learnedAt,
-          reviewCount: nextReviewCount,
-          lastReviewedAt: Date.now(),
+          reviewCount: existing.reviewCount || 0,
+          lastReviewedAt: existing.lastReviewedAt,
+          exposureCount: (existing.exposureCount || 0) + 1,
+          lastExposureAt: Date.now(),
         };
         return updated;
       }
@@ -1080,9 +1181,11 @@ export function useAppStore() {
           surface: canonicalSurface,
           id: `word-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           mastery: 'learning',
-          reviewCount: 1,
+          // 初次收录还没有任何测验记录，所以 reviewCount 从 0 起；遇见次数记 1
+          reviewCount: 0,
+          exposureCount: 1,
           learnedAt: Date.now(),
-          lastReviewedAt: Date.now(),
+          lastExposureAt: Date.now(),
         },
         ...filtered,
       ];
@@ -1219,11 +1322,6 @@ export function useAppStore() {
           return prev;
         }
         const updated = [...prev];
-        const nextReviewCount = (updated[existingIdx].reviewCount || 1) + 1;
-        let nextMastery = updated[existingIdx].mastery;
-        if (nextMastery === 'learning' && nextReviewCount >= 2) {
-          nextMastery = 'reviewing';
-        }
         updated[existingIdx] = {
           ...updated[existingIdx],
           ...enrichedItem,
@@ -1233,9 +1331,13 @@ export function useAppStore() {
           exampleJp: enrichedItem.exampleJp || updated[existingIdx].exampleJp,
           exampleCn: enrichedItem.exampleCn || updated[existingIdx].exampleCn,
           level: enrichedItem.level || updated[existingIdx].level,
-          mastery: nextMastery,
-          reviewCount: nextReviewCount,
-          lastReviewedAt: Date.now(),
+          // 私教再次讲到某句型属于【被动遇见】：记 exposureCount，
+          // 掌握度与遗忘曲线只认主动测验（recordReviewResult）
+          mastery: updated[existingIdx].mastery,
+          reviewCount: updated[existingIdx].reviewCount || 0,
+          lastReviewedAt: updated[existingIdx].lastReviewedAt,
+          exposureCount: (updated[existingIdx].exposureCount || 0) + 1,
+          lastExposureAt: Date.now(),
         };
         return updated;
       }
@@ -1244,8 +1346,10 @@ export function useAppStore() {
           ...enrichedItem,
           id: `gram-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           mastery: 'learning',
-          reviewCount: 1,
+          reviewCount: 0,
+          exposureCount: 1,
           learnedAt: Date.now(),
+          lastExposureAt: Date.now(),
         },
         ...prev,
       ];
@@ -1272,6 +1376,12 @@ export function useAppStore() {
     );
   };
 
+  /**
+   * 记录一次【主动测验】结果——掌握度晋升与遗忘曲线的唯一入口。
+   *
+   * 与 `addLearnedWord`（被动遇见，只加 exposureCount）严格分离：
+   * 只有学生真的在闪卡/小测里作答过，才允许改 reviewCount、mastery 与 lastReviewedAt。
+   */
   const recordReviewResult = (
     type: 'word' | 'grammar',
     id: string,
@@ -1281,7 +1391,7 @@ export function useAppStore() {
       setLearnedWords((prev) =>
         prev.map((w) => {
           if (w.id !== id) return w;
-          const nextCount = w.reviewCount + 1;
+          const nextCount = (w.reviewCount || 0) + 1;
           let nextMastery = w.mastery;
           if (result === 'mastered') nextMastery = 'mastered';
           else if (result === 'forgot') nextMastery = 'learning';
@@ -1293,7 +1403,7 @@ export function useAppStore() {
       setLearnedGrammar((prev) =>
         prev.map((g) => {
           if (g.id !== id) return g;
-          const nextCount = g.reviewCount + 1;
+          const nextCount = (g.reviewCount || 0) + 1;
           let nextMastery = g.mastery;
           if (result === 'mastered') nextMastery = 'mastered';
           else if (result === 'forgot') nextMastery = 'learning';
@@ -1304,7 +1414,13 @@ export function useAppStore() {
     }
   };
 
-  const addMessage = (message: ChatMessage) => {
+  /**
+   * 追加一条消息。
+   *
+   * `targetSessionId` 用于「刚创建了会话、state 还没提交」的场景（如从课表点「开始上课」要
+   * 立刻往新会话里写消息）。省略时写到当前会话。
+   */
+  const addMessage = (message: ChatMessage, targetSessionId?: string) => {
     // 先做知识提取，把本轮收录到的语法点 / 新单词挂回消息，气泡旁才能给出"已收录"提示
     const ingestResult =
       message.role === 'assistant'
@@ -1317,9 +1433,11 @@ export function useAppStore() {
         ? { ...message, collectedGrammar, collectedWords }
         : message;
 
+    const effectiveSessionId = targetSessionId || currentSessionId;
+
     setSessions((prevSessions) => {
       return prevSessions.map((session) => {
-        if (session.id === currentSessionId) {
+        if (session.id === effectiveSessionId) {
           let newTitle = session.title;
           const hasPriorUserMsg = session.messages.some((m) => m.role === 'user');
           // If this is the first user message and title was not manually customized, set to user's first sentence
@@ -1474,13 +1592,16 @@ export function useAppStore() {
     });
   };
 
+  /** 原位更新一条消息。`targetSessionId` 同 {@link addMessage}，用于刚建会话的即时写入 */
   const updateMessage = (
     messageId: string,
-    updater: Partial<ChatMessage> | ((prev: ChatMessage) => ChatMessage)
+    updater: Partial<ChatMessage> | ((prev: ChatMessage) => ChatMessage),
+    targetSessionId?: string
   ) => {
+    const effectiveSessionId = targetSessionId || currentSessionId;
     setSessions((prevSessions) => {
       return prevSessions.map((session) => {
-        if (session.id === currentSessionId) {
+        if (session.id === effectiveSessionId) {
           return {
             ...session,
             updatedAt: Date.now(),
@@ -1497,10 +1618,23 @@ export function useAppStore() {
     });
   };
 
-  const createNewSession = (mode?: StudyMode, scenario?: RoleplayScenario, customTitle?: string) => {
+  const createNewSession = (
+    mode?: StudyMode,
+    scenario?: RoleplayScenario,
+    customTitle?: string,
+    opts?: { quiet?: boolean }
+  ) => {
     const targetMode = mode || currentMode;
     const targetScenario = targetMode === 'roleplay' ? (scenario || currentScenario) : undefined;
-    const newSession = createNewDefaultSession(targetMode, targetScenario, customTitle, profile.level, settings.aiTutorName);
+    const newSession = createNewDefaultSession(
+      targetMode,
+      targetScenario,
+      customTitle,
+      profile.level,
+      settings.aiTutorName,
+      // opts 直接透传（包含 quiet）：上课会话要的是"空教室"，不是预演过的情景开场
+      opts
+    );
 
     setSessions((prev) => [newSession, ...prev]);
     setCurrentSessionId(newSession.id);
@@ -1519,9 +1653,25 @@ export function useAppStore() {
       setCurrentMode(target.mode);
     }
     if (target.scenarioId) {
-      const sc = ROLEPLAY_SCENARIOS.find((s) => s.id === target.scenarioId);
+      const sc = findScenarioById(target.scenarioId);
       if (sc) setCurrentScenario(sc);
     }
+  };
+
+  /**
+   * 按 id 解析情景：先查静态场景库，再查各课时的备课情景。
+   *
+   * 备课生成的角色扮演讲义是**动态**的（每个学生、每一课都不一样），所以必须有这条兜底查询——
+   * 否则切回某课会话时情景会丢失，学生就退回"模型自己猜我在演谁"的老问题。
+   */
+  const findScenarioById = (scenarioId?: string): RoleplayScenario | undefined => {
+    if (!scenarioId) return undefined;
+    const stat = ROLEPLAY_SCENARIOS.find((s) => s.id === scenarioId);
+    if (stat) return stat;
+    for (const l of plan.lessons || []) {
+      if (l.scenario && l.scenario.id === scenarioId) return l.scenario;
+    }
+    return undefined;
   };
 
   const deleteSession = (sessionId: string) => {
@@ -1627,20 +1777,169 @@ export function useAppStore() {
     }));
   };
 
+  /**
+   * @deprecated 旧「打勾清单」的进度开关。已由 `planNextCourseLesson` / `progress` 取代。
+   * 保留函数体只为存量数据兼容（`plan.tasks` 存在时仍可切换），新代码不得调用——
+   * "打勾 = 学会"这个心智正是要被废弃的。
+   */
   const toggleTaskCompleted = (taskId: string) => {
     setPlan((prev) => {
+      if (!Array.isArray(prev.tasks) || prev.tasks.length === 0) return prev;
       const updatedTasks = prev.tasks.map((t) =>
         t.id === taskId ? { ...t, completed: !t.completed } : t
       );
-      const completedCount = updatedTasks.filter((t) => t.completed).length;
-      const progress = Math.round((completedCount / updatedTasks.length) * 100);
+      return { ...prev, tasks: updatedTasks };
+    });
+  };
+
+  // ————————————————————————————————————————————————————————————
+  // 课表 / 课时（Lesson）操作
+  // ————————————————————————————————————————————————————————————
+
+  /** 当前课表进度：按步骤证据与分钟数算出来的，绝不写回 plan.weeklyProgress */
+  const progress = useMemo<CourseProgress>(
+    () => computeCourseProgress(plan.lessons || []),
+    [plan.lessons]
+  );
+
+  /** 分轴能力画像（由生词本 / 语法档案派生） */
+  const axes = useMemo(
+    () => deriveAbilityAxes(profile, learnedWords, learnedGrammar),
+    [profile, learnedWords, learnedGrammar]
+  );
+
+  /**
+   * 排下一课。
+   *
+   * A 段（本地、零 token、确定性）在这里完成：选词、选句型、排可执行步骤、生成模板兜底情景。
+   * 返回新课时对象，调用方据此去触发 B 段（AI 备课生成教材）。
+   * 课时先以 `material: 'generating'` 入库——即使 AI 备课失败，学生也能凭骨架上课。
+   */
+  const planNextCourseLesson = (options?: { focus?: Lesson['focus'] }): Lesson => {
+    const existing = plan.lessons || [];
+    const index = existing.length + 1;
+    const planned = planNextLesson({
+      profile,
+      learnedWords,
+      learnedGrammar,
+      lessonIndex: index,
+      focus: options?.focus,
+      existingLessons: existing,
+    });
+    const lesson: Lesson = {
+      ...planned.lesson,
+      scenario: planned.scenario,
+      material: planned.scenario ? 'generating' : 'skeleton',
+    };
+
+    setPlan((prev) => ({
+      ...prev,
+      lessons: [...(prev.lessons || []), lesson],
+      activeLessonId: lesson.id,
+      currentStage: lesson.title,
+      todayGoal: lesson.goal,
+      lastUpdated: new Date().toLocaleDateString(),
+    }));
+
+    return lesson;
+  };
+
+  /** B 段完成：把 AI 备课产出合并进课时。模型无权改本课的知识点，只能填教材正文 */
+  const applyLessonMaterial = (lessonId: string, payload: LessonMaterialPayload | null) => {
+    setPlan((prev) => ({
+      ...prev,
+      lessons: (prev.lessons || []).map((l) => (l.id === lessonId ? mergeLessonMaterial(l, payload) : l)),
+      lastUpdated: new Date().toLocaleDateString(),
+    }));
+  };
+
+  /** B 段失败：保留骨架、标记失败，界面提示可重试 */
+  const failLessonMaterial = (lessonId: string, error: string) => {
+    setPlan((prev) => ({
+      ...prev,
+      lessons: (prev.lessons || []).map((l) =>
+        l.id === lessonId ? { ...l, material: 'failed' as const, error } : l
+      ),
+    }));
+  };
+
+  /** 把上课会话绑定到课时：实战演练的"说了几个来回"据此统计 */
+  const attachLessonSession = (lessonId: string, sessionId: string) => {
+    setPlan((prev) => ({
+      ...prev,
+      lessons: (prev.lessons || []).map((l) => (l.id === lessonId ? { ...l, sessionId } : l)),
+      activeLessonId: lessonId,
+    }));
+  };
+
+  /** 学生自评完成某一步（仅对没有自动采证通道的步骤开放） */
+  const completeLessonStepManually = (lessonId: string, stepId: string) => {
+    setPlan((prev) => ({
+      ...prev,
+      lessons: (prev.lessons || []).map((l) => (l.id === lessonId ? markStepManually(l, stepId) : l)),
+    }));
+  };
+
+  /** 记下"这一步开过课了"：再点同一步时改发"接着上"的指令，不会重头讲一遍 */
+  const startLessonStep = (lessonId: string, stepId: string) => {
+    setPlan((prev) => ({
+      ...prev,
+      lessons: (prev.lessons || []).map((l) => (l.id === lessonId ? markStepStarted(l, stepId) : l)),
+    }));
+  };
+
+  const setActiveLesson = (lessonId: string) => {
+    setPlan((prev) => ({ ...prev, activeLessonId: lessonId }));
+  };
+
+  /** 删除一课（连带后面课次的编号不重排，保持已上课时的 id 稳定） */
+  const removeLesson = (lessonId: string) => {
+    setPlan((prev) => {
+      const lessons = (prev.lessons || []).filter((l) => l.id !== lessonId);
       return {
         ...prev,
-        tasks: updatedTasks,
-        weeklyProgress: progress,
+        lessons,
+        activeLessonId: prev.activeLessonId === lessonId ? undefined : prev.activeLessonId,
       };
     });
   };
+
+  /** 清空课表（生词本与学情档案不受影响） */
+  const resetCourse = () => {
+    setPlan((prev) => ({ ...prev, lessons: [], activeLessonId: undefined, currentStage: '尚未排课', todayGoal: '' }));
+  };
+
+  /**
+   * 证据回写：只要生词本 / 语法档案 / 会话有变化，就重算各课时的步骤完成度。
+   *
+   * 放在 useEffect 里而不是散落在各个事件里，是因为证据源本身就是这些 state；
+   * `applyLessonEvidence` 无变化时返回同一引用，所以这里不会自激。
+   * 依赖里刻意【不含 plan】——它自己才是被写的一方。
+   */
+  useEffect(() => {
+    setPlan((prev) => {
+      const lessons = prev.lessons || [];
+      if (lessons.length === 0) return prev;
+
+      // 演练回合只数【属于本情景】的助手发言。若按"会话里所有非空助手消息"来数，
+      // 开课问候与备课说明就白送 2 个回合，实战演练一步没演也会被判达标。
+      const sessionRoundCounts: Record<string, number> = {};
+      for (const l of lessons) {
+        if (!l.sessionId) continue;
+        const session = sessions.find((s) => s.id === l.sessionId);
+        sessionRoundCounts[l.sessionId] = countScenarioRounds(session?.messages, l.scenario?.id);
+      }
+
+      let changed = false;
+      const next = lessons.map((l) => {
+        const updated = applyLessonEvidence(l, { learnedWords, learnedGrammar, sessionRoundCounts });
+        if (updated !== l) changed = true;
+        return updated;
+      });
+
+      return changed ? { ...prev, lessons: next } : prev;
+    });
+  }, [learnedWords, learnedGrammar, sessions]);
 
   // Persona Presets Operations
   const savePersonaPreset = (presetData: Omit<PersonaPreset, 'id' | 'createdAt'>): PersonaPreset => {
@@ -1718,6 +2017,73 @@ export function useAppStore() {
     }
   };
 
+  // ================= API 连接配置档案：保存当前 / 一键切换 / 删除 =================
+  // 设计原则：档案只承载"连接层"（供应商 / 地址 / 密钥 / 模型 / 温度 / 深度思考策略），
+  // 应用档案时绝不触碰人设、外观与学习偏好，避免"换个 API 顺带换了整套人设"。
+
+  /** 从一套完整设置中抽出连接层字段，作为档案载荷 */
+  const pickApiProfilePayload = (s: ApiSettings) => ({
+    provider: s.provider,
+    baseUrl: s.baseUrl || '',
+    apiKey: s.apiKey || '',
+    model: s.model || '',
+    temperature: typeof s.temperature === 'number' ? s.temperature : 0.7,
+    deepThinkingMode: s.deepThinkingMode || ('auto' as const),
+  });
+
+  /**
+   * 保存当前（或指定的）API 连接配置为档案。
+   * 同名档案视为「更新」而非新增，避免用户连点保存后堆出一串同名条目。
+   */
+  const saveApiProfile = (name: string, source?: ApiSettings): ApiProfile => {
+    const payload = pickApiProfilePayload(source || settings);
+    const trimmed = name.trim().slice(0, 40) || `配置 ${apiProfiles.length + 1}`;
+    const existing = apiProfiles.find((p) => p.name === trimmed);
+
+    if (existing) {
+      const updated: ApiProfile = { ...existing, ...payload, updatedAt: Date.now() };
+      setApiProfiles((prev) => prev.map((p) => (p.id === existing.id ? updated : p)));
+      return updated;
+    }
+
+    const created: ApiProfile = {
+      id: `api-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: trimmed,
+      ...payload,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    setApiProfiles((prev) => [created, ...prev].slice(0, 30));
+    return created;
+  };
+
+  /** 应用档案：仅覆盖连接层字段，其余设置原样保留 */
+  const applyApiProfile = (profileId: string) => {
+    const target = apiProfiles.find((p) => p.id === profileId);
+    if (!target) return;
+    setSettings((prev) => ({
+      ...prev,
+      provider: target.provider,
+      baseUrl: target.baseUrl,
+      apiKey: target.apiKey,
+      model: target.model,
+      temperature: target.temperature,
+      deepThinkingMode: target.deepThinkingMode || 'auto',
+    }));
+  };
+
+  const deleteApiProfile = (profileId: string) => {
+    setApiProfiles((prev) => prev.filter((p) => p.id !== profileId));
+  };
+
+  const renameApiProfile = (profileId: string, name: string) => {
+    const trimmed = name.trim().slice(0, 40);
+    if (!trimmed) return;
+    setApiProfiles((prev) =>
+      prev.map((p) => (p.id === profileId ? { ...p, name: trimmed, updatedAt: Date.now() } : p))
+    );
+  };
+
   /**
    * 全量数据一键导出（包含学情档案、生词、语法、会话历史、人设与设置）
    */
@@ -1760,6 +2126,8 @@ export function useAppStore() {
         favoriteExpressions,
         settings: safeSettings,
         personaPresets,
+        // 连接配置档案一并随备份走，换设备后无需重新配置；未勾选包含密钥时同样抹除档案内的 Key
+        apiProfiles: apiProfiles.map((p) => (includeApiKey ? p : { ...p, apiKey: '' })),
         stats: statsData,
       },
       summary: {
@@ -1769,6 +2137,7 @@ export function useAppStore() {
         messagesCount: sessions.reduce((sum, s) => sum + (s.messages?.length || 0), 0),
         presetsCount: personaPresets.length,
         favoritesCount: favoriteExpressions.length,
+        apiProfilesCount: apiProfiles.length,
         hasApiKey: Boolean(includeApiKey && settings.apiKey?.trim()),
       },
     };
@@ -1889,8 +2258,10 @@ export function useAppStore() {
           localStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(incomingData.profile));
         }
         if (incomingData.plan) {
-          setPlan(incomingData.plan);
-          localStorage.setItem(STORAGE_KEYS.PLAN, JSON.stringify(incomingData.plan));
+          // 备份可能来自旧版本（只有打勾清单、没有课表），导入时统一规范化
+          const normalizedPlan = normalizeLegacyPlan(incomingData.plan);
+          setPlan(normalizedPlan);
+          localStorage.setItem(STORAGE_KEYS.PLAN, JSON.stringify(normalizedPlan));
         }
 
         const sanitizedWords = sanitizeAndEnrichLearnedWords(incomingWordsList);
@@ -1930,6 +2301,15 @@ export function useAppStore() {
           };
           setSettings(mergedSettings);
           localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(mergedSettings));
+        }
+
+        // 连接配置档案：覆盖模式下整体替换（备份里没有该字段则按"不带档案"处理，不动本地）
+        const incomingApiProfiles: ApiProfile[] = Array.isArray((incomingData as any).apiProfiles)
+          ? (incomingData as any).apiProfiles
+          : [];
+        if (incomingApiProfiles.length > 0) {
+          setApiProfiles(incomingApiProfiles);
+          localStorage.setItem(STORAGE_KEYS.API_PROFILES, JSON.stringify(incomingApiProfiles));
         }
 
         return {
@@ -2065,6 +2445,24 @@ export function useAppStore() {
           });
         }
 
+        // 7. 合并连接配置档案：按 id 去重后并入，同 id 以本地档案为准（不覆盖用户本机较新的配置）
+        const incomingProfiles: ApiProfile[] = Array.isArray((incomingData as any).apiProfiles)
+          ? (incomingData as any).apiProfiles
+          : [];
+        if (incomingProfiles.length > 0) {
+          setApiProfiles((prev) => {
+            const existingIds = new Set(prev.map((p) => p.id));
+            const existingNames = new Set(prev.map((p) => p.name));
+            const fresh = incomingProfiles.filter(
+              (p) => p && p.id && !existingIds.has(p.id) && !existingNames.has(p.name)
+            );
+            if (fresh.length === 0) return prev;
+            const next = [...prev, ...fresh].slice(0, 30);
+            localStorage.setItem(STORAGE_KEYS.API_PROFILES, JSON.stringify(next));
+            return next;
+          });
+        }
+
         return {
           success: true,
           stats: {
@@ -2094,6 +2492,7 @@ export function useAppStore() {
     localStorage.removeItem(STORAGE_KEYS.FAVORITE_EXPRESSIONS);
     localStorage.removeItem(STORAGE_KEYS.STATS);
     localStorage.removeItem(STORAGE_KEYS.MESSAGES);
+    localStorage.removeItem(STORAGE_KEYS.API_PROFILES);
 
     setProfile(DEFAULT_PROFILE);
     setPlan(DEFAULT_PLAN);
@@ -2103,6 +2502,7 @@ export function useAppStore() {
     setLearnedWords(sanitizeAndEnrichLearnedWords(DEFAULT_LEARNED_WORDS));
     setLearnedGrammar(sanitizeAndEnrichLearnedGrammar(DEFAULT_LEARNED_GRAMMAR));
     setFavoriteExpressions([]);
+    setApiProfiles([]);
   };
 
   return {
@@ -2112,6 +2512,19 @@ export function useAppStore() {
     plan,
     setPlan,
     toggleTaskCompleted,
+    // 课表 / 课时（Lesson）
+    progress,
+    axes,
+    planNextCourseLesson,
+    applyLessonMaterial,
+    failLessonMaterial,
+    attachLessonSession,
+    completeLessonStepManually,
+    startLessonStep,
+    setActiveLesson,
+    removeLesson,
+    resetCourse,
+    findScenarioById,
     // Sessions & History
     sessions,
     currentSessionId,
@@ -2175,6 +2588,12 @@ export function useAppStore() {
     deletePersonaPreset,
     exportPersonaPresets,
     importPersonaPresets,
+    // API 连接配置档案（多套 API 一键切换）
+    apiProfiles,
+    saveApiProfile,
+    applyApiProfile,
+    deleteApiProfile,
+    renameApiProfile,
     // Backup & Sync
     exportAllData,
     inspectBackupData,

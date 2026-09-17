@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { SEION_KANA, DAKUON_KANA } from '../../data/kanaChart';
 import { KanaItem } from '../../types';
-import { X, Volume2, Info } from 'lucide-react';
-import { speechService } from '../../services/speechService';
+import { X, Info } from 'lucide-react';
 
 interface KanaModalProps {
   isOpen: boolean;
@@ -17,9 +16,8 @@ export const KanaModal: React.FC<KanaModalProps> = ({ isOpen, onClose }) => {
 
   const currentList = activeTab === 'seion' ? SEION_KANA : DAKUON_KANA;
 
-  const handlePlaySound = (kana: KanaItem) => {
+  const handleSelectKana = (kana: KanaItem) => {
     setSelectedKana(kana);
-    speechService.speak(kana.hiragana, 0.9);
   };
 
   return (
@@ -28,7 +26,7 @@ export const KanaModal: React.FC<KanaModalProps> = ({ isOpen, onClose }) => {
         <div className="modal-header">
           <div className="modal-title-group">
             <span className="kana-header-icon">あ</span>
-            <h2>五十音图交互速查与发音指南</h2>
+            <h2>五十音图交互速查指南</h2>
           </div>
           <button className="modal-close-btn" onClick={onClose}>
             <X size={18} />
@@ -60,7 +58,7 @@ export const KanaModal: React.FC<KanaModalProps> = ({ isOpen, onClose }) => {
                   <button
                     key={index}
                     className={`kana-tile ${isSelected ? 'selected' : ''}`}
-                    onClick={() => handlePlaySound(k)}
+                    onClick={() => handleSelectKana(k)}
                   >
                     <span className="kana-hiragana">{k.hiragana}</span>
                     <span className="kana-katakana">{k.katakana}</span>
@@ -80,13 +78,6 @@ export const KanaModal: React.FC<KanaModalProps> = ({ isOpen, onClose }) => {
                   <span className="large-kata">{selectedKana.katakana}</span>
                 </div>
                 <div className="large-romaji">{selectedKana.romaji}</div>
-                <button
-                  className="kana-play-btn"
-                  onClick={() => speechService.speak(selectedKana.hiragana, 0.9)}
-                >
-                  <Volume2 size={16} />
-                  <span>朗读发音</span>
-                </button>
               </div>
 
               <div className="kana-tips-card">

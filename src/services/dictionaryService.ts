@@ -27,7 +27,7 @@ export interface DictEntry {
   meaning: string; // 权威中文释义
   detail?: string; // 深入用法说明或接续说明
   breakdown?: DictSegment[]; // 成分拆解（短语/句型/句子专用）
-  annotated?: string; // 逐词注音串，软件统一 `{原文[读音]}` 语法（短语/句型/句子专用，供小窗标题渲染振假名）
+  annotated?: string; // 带注音的标题串，软件统一 `{原文[读音]}` 语法（由 AI 返回的 "word" 字段解析得到，各类型都会有，供小窗标题渲染振假名）
   examples?: Array<{ jp: string; zh: string }>; // 经典例句
   level?: string; // JLPT 等级参考，如 N5 / N4
   pitch?: number; // 声调数字
