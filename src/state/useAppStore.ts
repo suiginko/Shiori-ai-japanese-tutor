@@ -42,6 +42,7 @@ import {
   LessonMaterialPayload,
   LessonStep,
   LessonStepEvidence,
+  StudyPace,
 } from '../types';
 import {
   planNextLesson,
@@ -55,6 +56,7 @@ import {
   lessonMinutes,
   deriveAbilityAxes,
   resolveFocus,
+  buildCustomScenario,
   type CourseProgress,
 } from '../services/curriculumPlanner';
 
@@ -1815,15 +1817,17 @@ export function useAppStore() {
    * 返回新课时对象，调用方据此去触发 B 段（AI 备课生成教材）。
    * 课时先以 `material: 'generating'` 入库——即使 AI 备课失败，学生也能凭骨架上课。
    */
-  const planNextCourseLesson = (options?: { focus?: Lesson['focus'] }): Lesson => {
+  const planNextCourseLesson = (options?: { focus?: Lesson['focus']; pace?: StudyPace }): Lesson => {
     const existing = plan.lessons || [];
     const index = existing.length + 1;
+    const pace = options?.pace || profile.studyPace || 'standard';
     const planned = planNextLesson({
       profile,
       learnedWords,
       learnedGrammar,
       lessonIndex: index,
       focus: options?.focus,
+      pace,
       existingLessons: existing,
     });
     const lesson: Lesson = {
@@ -1842,6 +1846,29 @@ export function useAppStore() {
     }));
 
     return lesson;
+  };
+
+  /** 设置学习节奏并持久化 */
+  const setStudyPace = (pace: StudyPace) => {
+    setProfile((prev) => ({ ...prev, studyPace: pace }));
+  };
+
+  /** 为既定课时微调/重设情境演练设定并重新触发备课 */
+  const rerollLessonScenario = (lessonId: string, customTopic?: string): Lesson | null => {
+    const current = (plan.lessons || []).find((l) => l.id === lessonId);
+    if (!current) return null;
+    const updatedScenario = buildCustomScenario(current, customTopic);
+    const updatedLesson: Lesson = {
+      ...current,
+      scenario: updatedScenario,
+      material: 'generating',
+      error: undefined,
+    };
+    setPlan((prev) => ({
+      ...prev,
+      lessons: (prev.lessons || []).map((l) => (l.id === lessonId ? updatedLesson : l)),
+    }));
+    return updatedLesson;
   };
 
   /** B 段完成：把 AI 备课产出合并进课时。模型无权改本课的知识点，只能填教材正文 */
@@ -2516,6 +2543,8 @@ export function useAppStore() {
     progress,
     axes,
     planNextCourseLesson,
+    setStudyPace,
+    rerollLessonScenario,
     applyLessonMaterial,
     failLessonMaterial,
     attachLessonSession,

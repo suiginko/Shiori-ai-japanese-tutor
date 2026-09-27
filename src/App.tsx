@@ -30,12 +30,14 @@ export function App() {
     // 课表 / 课时（Lesson）
     progress,
     axes,
-    planNextCourseLesson,
     applyLessonMaterial,
     failLessonMaterial,
     attachLessonSession,
     completeLessonStepManually,
     startLessonStep,
+    planNextCourseLesson,
+    setStudyPace,
+    rerollLessonScenario,
     setActiveLesson,
     removeLesson,
     resetCourse,
@@ -554,6 +556,14 @@ export function App() {
     return lesson;
   };
 
+  /** 课时场景换话题：重新生成该课的情景设定并触发 AI 重新备课 */
+  const handleRerollScenario = (lessonId: string, customTopic?: string) => {
+    const updatedLesson = rerollLessonScenario(lessonId, customTopic);
+    if (updatedLesson) {
+      handlePrepareLesson(updatedLesson);
+    }
+  };
+
   /**
    * 备课（或重备）：教材生成失败、或想换一版教材时重跑。
    *
@@ -879,6 +889,8 @@ export function App() {
           onMarkStepDone={handleMarkLessonStepDone}
           onRemoveLesson={handleRemoveLesson}
           onResetCourse={resetCourse}
+          onSetPace={setStudyPace}
+          onRerollScenario={handleRerollScenario}
         />
 
         <KanaModal

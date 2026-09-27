@@ -105,18 +105,26 @@ function renderDictJp(text: string): React.ReactNode {
   if (!text) return null;
   const annotated = sanitizeAnnotatedText(text);
   if (annotated) return renderDictRuby(annotated);
+  // 兜底：若 AI 未按规范输出外层花括号、仅输出裸方括号注音时，智能渲染为振假名
+  if (/\[\s*[ぁ-んァ-ヶー]+\s*(?:\|\s*\d+\s*)?\]/.test(text)) {
+    return renderDictRuby(text);
+  }
   return stripAnnotatedBlockMarks(text);
 }
 
 /**
  * 词典小窗内**中文说明文字**（如用法点拨）的渲染入口。
- * 与 renderDictJp 的差别在于：只有真的检出规范注音块时才接管渲染，其余一律原样返回，
- * 免得中文正文里正常的方括号被当成注音剥掉。
+ * 与 renderDictJp 的差别在于：优先使用规范注音块；若带有裸方括号注音同样兜底渲染，
+ * 其余正常文本原样返回。
  */
 function renderDictProse(text: string): React.ReactNode {
   if (!text) return null;
   const annotated = sanitizeAnnotatedText(text);
-  return annotated ? renderDictRuby(annotated) : text;
+  if (annotated) return renderDictRuby(annotated);
+  if (/[一-龯々〆]\s*\[\s*[ぁ-んァ-ヶー]+\s*(?:\|\s*\d+\s*)?\]/.test(text)) {
+    return renderDictRuby(text);
+  }
+  return text;
 }
 
 /**

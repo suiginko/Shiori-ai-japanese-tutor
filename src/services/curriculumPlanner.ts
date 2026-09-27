@@ -27,12 +27,13 @@ import {
   LessonStepEvidence,
   LessonStepKind,
   RoleplayScenario,
+  StudyPace,
   UserLearningProfile,
   UserLevel,
 } from '../types';
 import { COMPREHENSIVE_VOCABULARY } from '../data/dictionaryVocabulary';
 import { GRAMMAR_POINTS } from '../data/grammarPoints';
-import { SEION_KANA } from '../data/kanaChart';
+import { DAKUON_KANA, SEION_KANA } from '../data/kanaChart';
 import { isTrueSingleWordTerm } from './dictionaryService';
 import { isGenericGrammarContent, normalizeGrammarKey } from '../utils/grammarSynthesizer';
 import { stripAnnotatedBlockMarks } from '../utils/rubyParser';
@@ -49,13 +50,74 @@ export const JLPT_TARGETS: Record<UserLevel, { vocab: number; grammar: number }>
 
 const LEVEL_SEQUENCE: UserLevel[] = ['N0', 'N5', 'N4', 'N3', 'N2', 'N1'];
 
-/** 每课的教学容量：固定值让课时长度可预期，也让排课结果可测。 */
-export const LESSON_CAPACITY = {
-  newWords: 6,
-  newGrammars: 2,
-  reviewWords: 4,
-  /** N0 每课固定 5 个假名（直接用静态五十音表，绝不让模型生成假名） */
-  kanaPerLesson: 5,
+export interface LessonCapacity {
+  newWords: number;
+  newGrammars: number;
+  reviewWords: number;
+  kanaPerLesson: number;
+}
+
+/** 学习节奏容量分级（轻量微课 / 标准平衡 / 考前冲刺） */
+export const PACE_CAPACITY: Record<StudyPace, LessonCapacity> = {
+  light: {
+    newWords: 3,
+    newGrammars: 1,
+    reviewWords: 2,
+    kanaPerLesson: 4,
+  },
+  standard: {
+    newWords: 6,
+    newGrammars: 2,
+    reviewWords: 4,
+    kanaPerLesson: 5,
+  },
+  intensive: {
+    newWords: 10,
+    newGrammars: 3,
+    reviewWords: 6,
+    kanaPerLesson: 6,
+  },
+};
+
+/** 每课的默认教学容量（向后兼容） */
+export const LESSON_CAPACITY: LessonCapacity = PACE_CAPACITY.standard;
+
+export function getLessonCapacity(pace?: StudyPace): LessonCapacity {
+  return PACE_CAPACITY[pace || 'standard'] || PACE_CAPACITY.standard;
+}
+
+/**
+ * 语法先序依赖表 (Grammar Prerequisite DAG)
+ * 映射：高阶/复合句型 -> 前置基石句型（必须先修或优先修）
+ */
+export const GRAMMAR_PREREQUISITE_MAP: Record<string, string[]> = {
+  // 依赖て形（以 ～てください 或 て形 为基石）
+  '～てもいいですか': ['～てください'],
+  '～てはいけません': ['～てください'],
+  '～てから': ['～てください'],
+  '～てしまう / ちゃう': ['～てください'],
+  '～てみる': ['～てください'],
+  '～ておく': ['～てください'],
+  '～てある': ['～てください'],
+
+  // 依赖判断句
+  '～ではありません / じゃありません': ['～は～です'],
+  '～と思います': ['～は～です'],
+
+  // 依赖た形（以 ～たことがあります 为基石）
+  '～たり～たりする': ['～たことがあります'],
+  '～ほうがいいです': ['～たことがあります'],
+  '～後（あと）で': ['～たことがあります'],
+
+  // 依赖动词原形/接续
+  '～ことができます': ['～は～です'],
+  '～前（まえ）に': ['～ることができます', '～は～です'],
+  '～つもりです': ['～たいです'],
+
+  // N3/N2 复合逻辑与辨析
+  '～わけにはいかない': ['～ないでください'],
+  '～おかげで / ～せいで': ['～と思います'],
+  '～に対して': ['～について'],
 };
 
 // ————————————————————————————————————————————————————————————
@@ -195,6 +257,8 @@ export interface PlannerInput {
   lessonIndex: number;
   /** 训练重心，缺省由 goal + level 推断 */
   focus?: Lesson['focus'];
+  /** 学习节奏：微课(~15m) / 标准(~25m) / 冲刺(~40m)，缺省读 profile.studyPace */
+  pace?: StudyPace;
   /** 已排出的课时（用于避开重复选词、判断是否已有教材） */
   existingLessons?: Lesson[];
 }
@@ -215,6 +279,32 @@ const LESSON_MINUTES: Record<LessonStepKind, number> = {
   wrapup: 3,
 };
 
+function getStepMinutes(kind: LessonStepKind, pace: StudyPace): number {
+  if (pace === 'light') {
+    switch (kind) {
+      case 'warmup': return 2;
+      case 'vocab': return 3;
+      case 'grammar': return 3;
+      case 'script': return 3;
+      case 'drill': return 2;
+      case 'roleplay': return 4;
+      case 'wrapup': return 1;
+    }
+  }
+  if (pace === 'intensive') {
+    switch (kind) {
+      case 'warmup': return 4;
+      case 'vocab': return 12;
+      case 'grammar': return 10;
+      case 'script': return 12;
+      case 'drill': return 8;
+      case 'roleplay': return 12;
+      case 'wrapup': return 4;
+    }
+  }
+  return LESSON_MINUTES[kind] || 5;
+}
+
 // ————————————————————————————————————————————————————————————
 // 三、A 段主入口：排出一课
 // ————————————————————————————————————————————————————————————
@@ -225,6 +315,9 @@ export function planNextLesson(input: PlannerInput): PlannedLesson {
   const learnedGrammar = input.learnedGrammar || [];
   const existing = input.existingLessons || [];
 
+  const pace: StudyPace = input.pace || profile?.studyPace || 'standard';
+  const capacity = getLessonCapacity(pace);
+
   const level: UserLevel = profile?.level || 'N5';
   const goal: LearningGoal | undefined = profile?.goal;
   const focus: Lesson['focus'] = input.focus || resolveFocus(goal, level);
@@ -233,13 +326,13 @@ export function planNextLesson(input: PlannerInput): PlannedLesson {
 
   const items: LessonItems =
     focus === 'kana'
-      ? planKanaItems(lessonIndex)
-      : planTextItems({ level, focus, lessonIndex, learnedWords, learnedGrammar, existing });
+      ? planKanaItems(lessonIndex, capacity)
+      : planTextItems({ level, focus, lessonIndex, learnedWords, learnedGrammar, existing, profile, capacity });
 
-  const steps = buildSteps({ lessonId, focus, items, level, lessonIndex });
+  const steps = buildSteps({ lessonId, focus, items, level, lessonIndex, pace, profile });
 
   // 课时目标必须【可验证】：写清"能独立完成什么"，不写"掌握 XX 知识"
-  const goalText = buildGoalText(focus, items, level);
+  const goalText = buildGoalText(focus, items, level, lessonIndex);
 
   const lesson: Lesson = {
     id: lessonId,
@@ -264,27 +357,139 @@ export function planNextLesson(input: PlannerInput): PlannedLesson {
   return { lesson, scenario };
 }
 
-function planKanaItems(lessonIndex: number): LessonItems {
-  const per = LESSON_CAPACITY.kanaPerLesson;
-  const start = ((lessonIndex - 1) * per) % (SEION_KANA.length || 1);
-  const picked: typeof SEION_KANA = [];
-  for (let i = 0; i < per; i += 1) {
-    const item = SEION_KANA[(start + i) % SEION_KANA.length];
-    if (item) picked.push(item);
+/** N0 假名阶梯：清音(1-9课) -> 浊音半浊音(10-14课) -> 促长拨音规则(15课) -> 五十音收官与破冰问候桥梁(16课) */
+function planKanaItems(lessonIndex: number, capacity: LessonCapacity): LessonItems {
+  // 假名课时循环周期 16 课
+  const cycleIndex = ((lessonIndex - 1) % 16) + 1;
+
+  if (cycleIndex <= 9) {
+    // 清音阶段 (1~9 课)
+    const per = capacity.kanaPerLesson || 5;
+    let start = (cycleIndex - 1) * per;
+    let count = per;
+    if (cycleIndex === 9) {
+      // 最后一组包含 わ、を、ん 及综合串讲
+      start = 40;
+      count = Math.min(6, (SEION_KANA.length || 46) - start);
+    }
+    const picked = SEION_KANA.slice(start, start + count);
+    const kanaStr = picked.map((k) => k.hiragana).join('');
+
+    const MNEMONIC_WORDS: Record<number, string> = {
+      1: '例词拼读：あい（爱）、あお（蓝）、いえ（家）、うえ（上）',
+      2: '例词拼读：かお（脸）、あき（秋天）、きく（听/菊花）、いけ（池塘）',
+      3: '例词拼读：あさ（早晨）、すし（寿司）、せかい（世界）、そこ（那里）',
+      4: '例词拼读：うた（歌曲）、ちち（父亲）、つき（月亮）、て（手）',
+      5: '例词拼读：さかな（鱼）、にく（肉）、いぬ（狗）、ねこ（猫）',
+      6: '例词拼读：はな（花/鼻子）、ひと（人）、ふね（船）、ほし（星星）',
+      7: '例词拼读：あたま（头）、みみ（耳朵）、むし（昆虫）、め（眼睛）',
+      8: '例词拼读：やま（山）、ゆき（雪）、よる（夜晚）、そら（天空）',
+      9: '例词拼读：はる（春天）、かわ（河流）、ほん（书本）、にほん（日本）',
+    };
+
+    return {
+      words: [],
+      grammars: [],
+      script: [
+        {
+          speaker: 'ai',
+          jp: kanaStr,
+          cn: `本课清音：${picked.map((k) => `${k.hiragana}（${k.romaji}）`).join('、')}`,
+          note: MNEMONIC_WORDS[cycleIndex] || picked.map((k) => `${k.hiragana}：${k.chineseMnemonic}`).join('；'),
+        },
+      ],
+      points: [
+        ...picked.map((k) => `${k.hiragana} / ${k.katakana}（${k.romaji}）— ${k.pronunciationTip}`),
+        MNEMONIC_WORDS[cycleIndex] || '',
+      ].filter(Boolean),
+    };
   }
 
+  if (cycleIndex >= 10 && cycleIndex <= 14) {
+    // 浊音与半浊音阶段 (10~14 课)
+    const dakuonStep = cycleIndex - 10; // 0: ga, 1: za, 2: da, 3: ba, 4: pa
+    const start = dakuonStep * 5;
+    const picked = DAKUON_KANA.slice(start, start + 5);
+    const kanaStr = picked.map((k) => k.hiragana).join('');
+
+    const DAKUON_WORDS: Record<number, string> = {
+      10: '浊音拼读：ごはん（米饭）、かぎ（钥匙）、かげ（影子）、ひげ（胡须）',
+      11: '浊音拼读：みず（水）、かぜ（风）、ぞう（大象）、ざっし（杂志）',
+      12: '浊音拼读：からだ（身体）、はなぢ（鼻血）、でんき（电）、まど（窗户）',
+      13: '浊音拼读：たばこ（香烟）、えび（虾）、ぶた（猪）、ぼく（我）',
+      14: '半浊音拼读：パン（面包）、きっぷ（车票）、さんぽ（散步）、えんぴつ（铅笔）',
+    };
+
+    return {
+      words: [],
+      grammars: [],
+      script: [
+        {
+          speaker: 'ai',
+          jp: kanaStr,
+          cn: `本课${cycleIndex === 14 ? '半浊音' : '浊音'}：${picked.map((k) => `${k.hiragana}（${k.romaji}）`).join('、')}`,
+          note: DAKUON_WORDS[cycleIndex] || '体会声带振动与清浊音气流差异',
+        },
+      ],
+      points: [
+        ...picked.map((k) => `${k.hiragana} / ${k.katakana}（${k.romaji}）— ${k.pronunciationTip}`),
+        DAKUON_WORDS[cycleIndex] || '',
+      ].filter(Boolean),
+    };
+  }
+
+  if (cycleIndex === 15) {
+    // 特殊音专项：促音、长音与拨音节奏
+    return {
+      words: [],
+      grammars: [],
+      script: [
+        {
+          speaker: 'ai',
+          jp: 'っ・ー・ん',
+          cn: '特殊音节专项：促音（っ 停顿一拍）、长音（ー 延长一拍）、拨音（ん 独立一拍）',
+          note: '对比感受：ビル（大楼）vs ビール（啤酒）；おばさん（阿姨）vs おばあさん（祖母）；きって（邮票）vs きて（来）',
+        },
+      ],
+      points: [
+        '促音「っ」：不发音，停顿半拍/一拍，如「きっぷ（切符）」',
+        '长音：元音延长一拍，如「おにいさん」「おかあさん」「コーヒー」',
+        '拨音「ん」：占完整一拍，依后接音变化为 m/n/ng 口型',
+      ],
+    };
+  }
+
+  // cycleIndex === 16：五十音收官大闯关与破冰问候桥梁课
   return {
-    words: [],
-    grammars: [],
+    words: [
+      { surface: 'おはよう', reading: 'おはよう', meaning: '早上好（熟人日常）', isNew: true, reason: 'N0-N5破冰核心句' },
+      { surface: 'こんにちは', reading: 'こんにちは', meaning: '你好（白天通用）', isNew: true, reason: 'N0-N5破冰核心句' },
+      { surface: 'ありがとう', reading: 'ありがとう', meaning: '谢谢', isNew: true, reason: 'N0-N5破冰核心句' },
+      { surface: 'すみません', reading: 'すみません', meaning: '不好意思 / 对不起 / 借过', isNew: true, reason: 'N0-N5破冰核心句' },
+    ],
+    grammars: [
+      {
+        title: '～です（初遇判断）',
+        structure: '名词 + です',
+        meaning: '是……（如：学生です）',
+        level: 'N5',
+        isNew: true,
+        reason: '迈入N5第一句型',
+      },
+    ],
     script: [
       {
         speaker: 'ai',
-        jp: picked.map((k) => k.hiragana).join(''),
-        cn: `本课假名：${picked.map((k) => `${k.hiragana}（${k.romaji}）`).join('、')}`,
-        note: picked.map((k) => `${k.hiragana}：${k.chineseMnemonic}`).join('；'),
+        jp: 'はじめまして。',
+        cn: '初次见面。恭喜你通关五十音！',
+        note: '你已掌握全部清音、浊音与发音规则，即将开启 N5 真正会话世界！',
       },
     ],
-    points: picked.map((k) => `${k.hiragana} / ${k.katakana}（${k.romaji}）— ${k.pronunciationTip}`),
+    points: [
+      '五十音全貌复盘：平假名日常书写、片假名外来语、罗马字输入法',
+      '常用高频问候：おはよう、こんにちは、ありがとう、すみません',
+      '即将解锁：N5 基础句型与情景实战',
+    ],
   };
 }
 
@@ -295,9 +500,13 @@ function planTextItems(args: {
   learnedWords: LearnedWord[];
   learnedGrammar: LearnedGrammar[];
   existing: Lesson[];
+  profile?: UserLearningProfile;
+  capacity?: LessonCapacity;
 }): LessonItems {
-  const { level, focus, lessonIndex, learnedWords, learnedGrammar, existing } = args;
+  const { level, focus, lessonIndex, learnedWords, learnedGrammar, existing, profile } = args;
+  const capacity = args.capacity || LESSON_CAPACITY;
   const levels = allowedLevels(level);
+  const weakPoints = Array.isArray(profile?.weakPoints) ? profile.weakPoints : [];
 
   const knownSurfaces = new Set(learnedWords.map((w) => w?.surface).filter(Boolean) as string[]);
   const taughtSurfaces = new Set<string>();
@@ -323,28 +532,60 @@ function planTextItems(args: {
     })
     .map((x) => x.d);
 
-  const newWords = pickRotated(ranked, LESSON_CAPACITY.newWords, lessonIndex);
+  const newWords = pickRotated(ranked, capacity.newWords, lessonIndex);
 
-  // ——— 复习靶标（"见过很多次却没考过"的词优先——这正是拆分 exposureCount 的收益）———
-  const reviewTargets = [...learnedWords]
-    .filter((w) => w && w.mastery !== 'mastered')
+  // ——— 复习靶标（薄弱项针对优先 + 久未测验遗忘风险最高）———
+  const unmastered = [...learnedWords].filter((w) => w && w.mastery !== 'mastered');
+
+  // 优先提取薄弱项
+  const weakWordTargets: LearnedWord[] = [];
+  const normalWordCandidates: LearnedWord[] = [];
+
+  for (const w of unmastered) {
+    const isWeak = weakPoints.some(
+      (wp) =>
+        wp &&
+        (w.surface.includes(wp) ||
+          (w.meaning && w.meaning.includes(wp)) ||
+          wp.includes(w.surface))
+    );
+    if (isWeak) {
+      weakWordTargets.push(w);
+    } else {
+      normalWordCandidates.push(w);
+    }
+  }
+
+  const sortedNormal = normalWordCandidates
     .map((w) => {
       const daysSinceReview = w.lastReviewedAt
         ? (Date.now() - w.lastReviewedAt) / 86400000
         : 999;
-      // 遗忘风险：久未测验 + 被动遇见多（说明反复碰到但没真正考过）
       const risk = daysSinceReview * 2 + (w.exposureCount || 0) * 1.5 - (w.reviewCount || 1) * 0.5;
       return { w, risk };
     })
     .sort((a, b) => b.risk - a.risk)
-    .slice(0, LESSON_CAPACITY.reviewWords)
     .map((x) => x.w);
 
-  // ——— 句型语法 ———
+  const pickedReviewWords = [...weakWordTargets, ...sortedNormal].slice(0, capacity.reviewWords);
+
+  // ——— 句型语法（引入 DAG 先序依赖排课与薄弱项回捞）———
   const knownGrammarKeys = new Set(learnedGrammar.map((g) => normalizeGrammarKey(g?.title)));
   const taughtGrammarKeys = new Set<string>();
   for (const l of existing) {
     for (const g of l.items?.grammars || []) if (g.isNew) taughtGrammarKeys.add(normalizeGrammarKey(g.title));
+  }
+
+  // 查找前置依赖
+  function findPrerequisites(title: string): string[] {
+    for (const [key, prereqs] of Object.entries(GRAMMAR_PREREQUISITE_MAP)) {
+      const cleanKey = key.replace(/^[～~]/, '').trim();
+      const cleanTitle = title.replace(/^[～~]/, '').trim();
+      if (cleanTitle.includes(cleanKey) || cleanKey.includes(cleanTitle)) {
+        return prereqs;
+      }
+    }
+    return [];
   }
 
   const grammarCandidates = GRAMMAR_POINTS
@@ -368,7 +609,75 @@ function planTextItems(args: {
     })
     .map((x) => x.g);
 
-  const newGrammars = pickRotated(grammarCandidates, LESSON_CAPACITY.newGrammars, lessonIndex);
+  // 依赖检查：如果命中率高的句型缺少前置依赖，优先挑选未掌握的前置句型作为基石
+  const finalGrammars: Array<{
+    title: string;
+    structure?: string;
+    meaning?: string;
+    level?: string;
+    isNew: boolean;
+    reason?: string;
+    prerequisites?: string[];
+  }> = [];
+
+  const candidatePool = [...grammarCandidates];
+
+  for (let i = 0; i < candidatePool.length && finalGrammars.length < capacity.newGrammars; i += 1) {
+    const candidate = candidatePool[i];
+    const prereqs = findPrerequisites(candidate.title);
+    const missing = prereqs.find(
+      (p) => !knownGrammarKeys.has(normalizeGrammarKey(p)) && !taughtGrammarKeys.has(normalizeGrammarKey(p))
+    );
+
+    if (missing) {
+      // 检查库里是否能找到该前置依赖
+      const prereqItem = GRAMMAR_POINTS.find(
+        (gp) => normalizeGrammarKey(gp.title) === normalizeGrammarKey(missing)
+      );
+      if (prereqItem && !finalGrammars.some((fg) => normalizeGrammarKey(fg.title) === normalizeGrammarKey(prereqItem.title))) {
+        finalGrammars.push({
+          title: prereqItem.title,
+          structure: prereqItem.structure,
+          meaning: prereqItem.meaning,
+          level: prereqItem.level,
+          isNew: true,
+          reason: `前置基石：为学习「${candidate.title}」做准备`,
+        });
+        taughtGrammarKeys.add(normalizeGrammarKey(prereqItem.title));
+        continue;
+      }
+    }
+
+    if (!finalGrammars.some((fg) => normalizeGrammarKey(fg.title) === normalizeGrammarKey(candidate.title))) {
+      finalGrammars.push({
+        title: candidate.title,
+        structure: candidate.structure,
+        meaning: candidate.meaning,
+        level: candidate.level,
+        isNew: true,
+        reason: prereqs.length ? '阶梯进阶句型' : '本课新句型',
+        prerequisites: prereqs.length ? prereqs : undefined,
+      });
+      taughtGrammarKeys.add(normalizeGrammarKey(candidate.title));
+    }
+  }
+
+  // 兜底补足
+  if (finalGrammars.length < capacity.newGrammars) {
+    const rotated = pickRotated(grammarCandidates, capacity.newGrammars - finalGrammars.length, lessonIndex);
+    for (const g of rotated) {
+      if (!finalGrammars.some((fg) => normalizeGrammarKey(fg.title) === normalizeGrammarKey(g.title))) {
+        finalGrammars.push({
+          title: g.title,
+          structure: g.structure,
+          meaning: g.meaning,
+          level: g.level,
+          isNew: true,
+          reason: '本课新句型',
+        });
+      }
+    }
+  }
 
   return {
     words: [
@@ -381,34 +690,42 @@ function planTextItems(args: {
         isNew: true,
         reason: '本课新词',
       })),
-      ...reviewTargets.map((w) => ({
-        surface: w.surface,
-        reading: w.reading,
-        meaning: w.meaning,
-        pos: w.pos,
-        level: w.level,
-        isNew: false,
-        reason:
-          (w.exposureCount || 0) >= 3 && (w.reviewCount || 1) <= 1
+      ...pickedReviewWords.map((w) => {
+        const isWeak = weakPoints.some(
+          (wp) =>
+            wp &&
+            (w.surface.includes(wp) ||
+              (w.meaning && w.meaning.includes(wp)) ||
+              wp.includes(w.surface))
+        );
+        return {
+          surface: w.surface,
+          reading: w.reading,
+          meaning: w.meaning,
+          pos: w.pos,
+          level: w.level,
+          isNew: false,
+          reason: isWeak
+            ? '重点薄弱项针对巩固'
+            : (w.exposureCount || 0) >= 3 && (w.reviewCount || 1) <= 1
             ? `已遇见 ${w.exposureCount} 次却从未测验过`
-            // 不带括号：这个 reason 会被拼进 `（${reason}）` 里，再套一层括号就成了 `（该复习了（温习中））`
             : `该复习了 · ${w.mastery === 'reviewing' ? '温习中' : '初学'}`,
-      })),
+        };
+      }),
     ],
-    grammars: newGrammars.map((g) => ({
-      title: g.title,
-      structure: g.structure,
-      meaning: g.meaning,
-      level: g.level,
-      isNew: true,
-      reason: '本课新句型',
-    })),
+    grammars: finalGrammars,
     points: [],
   };
 }
 
 function buildLessonTitle(focus: Lesson['focus'], items: LessonItems, index: number): string {
-  if (focus === 'kana') return `第 ${index} 课 · 五十音阶梯（${(items.script?.[0]?.cn || '').replace('本课假名：', '')}）`;
+  if (focus === 'kana') {
+    const cycleIndex = ((index - 1) % 16) + 1;
+    if (cycleIndex <= 9) return `第 ${index} 课 · 五十音清音阶梯（第 ${cycleIndex}/9 阶段）`;
+    if (cycleIndex <= 14) return `第 ${index} 课 · 浊音与半浊音进阶（第 ${cycleIndex - 9}/5 阶段）`;
+    if (cycleIndex === 15) return `第 ${index} 课 · 促音与长音发音规则专项`;
+    return `第 ${index} 课 · 五十音收官与破冰问候`;
+  }
   const theme = FOCUS_THEME_LABEL[focus] || '日常会话';
   const seed = items.words.find((w) => w.isNew)?.surface;
   return seed ? `第 ${index} 课 · ${theme}：${seed}` : `第 ${index} 课 · ${theme}`;
@@ -424,10 +741,13 @@ const FOCUS_THEME_LABEL: Record<Lesson['focus'], string> = {
   kana: '五十音',
 };
 
-function buildGoalText(focus: Lesson['focus'], items: LessonItems, level: UserLevel): string {
+function buildGoalText(focus: Lesson['focus'], items: LessonItems, level: UserLevel, lessonIndex?: number): string {
   if (focus === 'kana') {
-    const kana = items.script?.[0]?.jp || '';
-    return `能准确认读并听辨 ${kana.split('').join('、')} 的平片假名与发音`;
+    const cycleIndex = lessonIndex ? ((lessonIndex - 1) % 16) + 1 : 1;
+    if (cycleIndex <= 9) return '准确认读与拼读书写本课假名，并能跟读拼出日常基础单词';
+    if (cycleIndex <= 14) return '掌握声带振动技巧，准确区分清音与浊音/半浊音的发音与拼写';
+    if (cycleIndex === 15) return '掌握促音停顿拍节与长音拖长规则，听辨易混相似词';
+    return '五十音大通关：流畅认读全部假名，并能脱口而出初次相遇的破冰问候';
   }
   const w = items.words.filter((x) => x.isNew).map((x) => x.surface);
   const g = items.grammars.map((x) => x.title);
@@ -449,14 +769,15 @@ function makeStep(
   index: number,
   title: string,
   brief: string,
-  action: LessonStep['action']
+  action: LessonStep['action'],
+  pace: StudyPace = 'standard'
 ): LessonStep {
   return {
     id: `${lessonId}-step-${index}-${kind}`,
     kind,
     title,
     brief,
-    minutes: LESSON_MINUTES[kind] || 5,
+    minutes: getStepMinutes(kind, pace),
     action,
     done: false,
   };
@@ -468,8 +789,10 @@ function buildSteps(args: {
   items: LessonItems;
   level: UserLevel;
   lessonIndex: number;
+  pace?: StudyPace;
+  profile?: UserLearningProfile;
 }): LessonStep[] {
-  const { lessonId, focus, items, level } = args;
+  const { lessonId, focus, items, level, pace = 'standard' } = args;
   const steps: LessonStep[] = [];
   let i = 0;
 
@@ -484,23 +807,40 @@ function buildSteps(args: {
         type: 'chat',
         mode: 'tutor',
         seedPrompt: `请带着我逐个认读本课假名：${kana.split('').join('、')}。用中文讲清每个假名的发音口型要点与易混点，每个都给我一组最小对比练习。`,
-      }),
+      }, pace),
       makeStep(lessonId, 'vocab', i++, '假名认读与书写', '平假名 / 片假名 / 罗马字三向对应', {
         type: 'chat',
         mode: 'tutor',
         seedPrompt: `请把本课假名（${kana.split('').join('、')}）的平假名、片假名、罗马字列成对照，并给我默写练习。`,
-      }),
+      }, pace),
       makeStep(lessonId, 'drill', i++, '五十音自测', '打开笔记本自测本课假名，答不出的标记为忘记', {
         type: 'review',
         tab: 'grammar',
-      }),
+      }, pace),
       makeStep(lessonId, 'wrapup', i++, '复盘', '回看今天容易混的假名', {
         type: 'chat',
         mode: 'tutor',
         seedPrompt: '帮我复盘今天学的假名里我最容易混的几个，并给我明天的复习建议。',
-      })
+      }, pace)
     );
     return steps;
+  }
+
+  // 检查是否有薄弱项需要开场针对性热身
+  const weakReviewWords = reviewWords.filter((w) => (w.reason || '').includes('薄弱项'));
+  const weakGrammars = grammars.filter((g) => (g.reason || '').includes('前置基石') || (g.reason || '').includes('薄弱项'));
+  const hasRemedialTargets = weakReviewWords.length > 0 || weakGrammars.length > 0;
+
+  let warmupSeedPrompt = `听说今天要聊「${FOCUS_THEME_LABEL[focus]}」。请用两三句闲聊式的日语把话头带起来，顺手问我一两个相关的旧表达、看看我还记得多少。这一步只做热身：不要介绍课程、不要预告今天要学什么、不要展示词表，说完就停下来等我回应。`;
+  let warmupBrief = '用本课主题的自然闲聊唤起相关旧知，不急着上新内容';
+
+  if (hasRemedialTargets) {
+    const weakNames = [
+      ...weakReviewWords.map((w) => w.surface),
+      ...weakGrammars.map((g) => g.title),
+    ].slice(0, 3);
+    warmupBrief = `针对薄弱点（${weakNames.join('、')}）进行轻量复习唤醒`;
+    warmupSeedPrompt = `听说今天要聊「${FOCUS_THEME_LABEL[focus]}」。在正式上新课前，请先用轻松闲聊的日语顺带考考我之前容易混淆的【${weakNames.join('、')}】，做个靶向复查。我说完后，你简短点评即可，等我确认后再进入新课。不要剧透本课的新词表。`;
   }
 
   steps.push(
@@ -508,16 +848,14 @@ function buildSteps(args: {
       lessonId,
       'warmup',
       i++,
-      '热身唤醒',
-      '用本课主题的自然闲聊唤起相关旧知，不急着上新内容',
+      hasRemedialTargets ? '复习唤醒（巩固弱项）' : '热身唤醒',
+      warmupBrief,
       {
         type: 'chat',
         mode: 'tutor',
-        // 【不写"告诉我今天要学什么"】——那会让热身变成开课宣言。
-        // 课表里已经把本课的词、句型和目标摆好了，学生点这一步只是想先热热嘴；
-        // 一旦让热身负责"介绍课程"，学生再点一次就会听到同一段开场白（重复触发）。
-        seedPrompt: `听说今天要聊「${FOCUS_THEME_LABEL[focus]}」。请用两三句闲聊式的日语把话头带起来，顺手问我一两个相关的旧表达、看看我还记得多少。这一步只做热身：不要介绍课程、不要预告今天要学什么、不要展示词表，说完就停下来等我回应。`,
-      }
+        seedPrompt: warmupSeedPrompt,
+      },
+      pace
     )
   );
 
@@ -533,7 +871,8 @@ function buildSteps(args: {
           type: 'chat',
           mode: 'tutor',
           seedPrompt: `请教我本课这几个新词：${newWords.map((w) => w.surface).join('、')}。每个词给我读音、声调、词性、一句贴合「${FOCUS_THEME_LABEL[focus]}」的例句和中文翻译；讲完让我各造一句，帮我改。`,
-        }
+        },
+        pace
       )
     );
   }
@@ -550,17 +889,26 @@ function buildSteps(args: {
           type: 'chat',
           mode: 'tutor',
           seedPrompt: `请重点讲这两个句型：${grammars.map((g) => g.title).join('、')}。接续规则、语感差异、易错点都用中文讲透，各配两个场景例句，然后让我用它们造句。`,
-        }
+        },
+        pace
       )
     );
   }
 
   steps.push(
-    makeStep(lessonId, 'script', i++, '情境脚本', '用本课词与句型串一段可照着演的情境对话', {
-      type: 'chat',
-      mode: 'tutor',
-      seedPrompt: `请只用本课的新词（${newWords.map((w) => w.surface).join('、') || '无'}）和句型（${grammars.map((g) => g.title).join('、') || '无'}）编一段「${FOCUS_THEME_LABEL[focus]}」的情境对话，3~5 个来回，每一句都配中文翻译；先给我看整段，再逐句带我读。`,
-    })
+    makeStep(
+      lessonId,
+      'script',
+      i++,
+      '情境脚本',
+      '用本课词与句型串一段可照着演的情境对话',
+      {
+        type: 'chat',
+        mode: 'tutor',
+        seedPrompt: `请只用本课的新词（${newWords.map((w) => w.surface).join('、') || '无'}）和句型（${grammars.map((g) => g.title).join('、') || '无'}）编一段「${FOCUS_THEME_LABEL[focus]}」的情境对话，3~5 个来回，每一句都配中文翻译；先给我看整段，再逐句带我读。`,
+      },
+      pace
+    )
   );
 
   if (reviewWords.length) {
@@ -574,33 +922,58 @@ function buildSteps(args: {
         {
           type: 'flashcard',
           wordIds: reviewWords.map((w) => w.surface),
-        }
+        },
+        pace
       )
     );
   } else {
     steps.push(
-      makeStep(lessonId, 'drill', i++, '随堂小测', '用本课内容即时出题，检验是否真的会用', {
-        type: 'chat',
-        mode: 'assessment',
-        seedPrompt: `请就本课内容出 5 道小测（含填空、改错、翻译各类型），一次一题，我答完你再出下一题并点评。`,
-      })
+      makeStep(
+        lessonId,
+        'drill',
+        i++,
+        '随堂小测',
+        '用本课内容即时出题，检验是否真的会用',
+        {
+          type: 'chat',
+          mode: 'assessment',
+          seedPrompt: `请就本课内容出 5 道小测（含填空、改错、翻译各类型），一次一题，我答完你再出下一题并点评。`,
+        },
+        pace
+      )
     );
   }
 
   steps.push(
-    makeStep(lessonId, 'roleplay', i++, `实战演练：${FOCUS_THEME_LABEL[focus]}`, '在情景里真的用出今天的词和句型', {
-      type: 'chat',
-      mode: 'roleplay',
-      seedPrompt: `我们开始角色扮演实战。请按设定进入角色，尽量把我今天学的词和句型用出来，并留给我接话的空间。`,
-    })
+    makeStep(
+      lessonId,
+      'roleplay',
+      i++,
+      `实战演练：${FOCUS_THEME_LABEL[focus]}`,
+      '在情景里真的用出今天的词和句型',
+      {
+        type: 'chat',
+        mode: 'roleplay',
+        seedPrompt: `我们开始角色扮演实战。请按设定进入角色，尽量把我今天学的词和句型用出来，并留给我接话的空间。`,
+      },
+      pace
+    )
   );
 
   steps.push(
-    makeStep(lessonId, 'wrapup', i++, '收束复盘', '总结本课所得，给出下一课建议', {
-      type: 'chat',
-      mode: 'tutor',
-      seedPrompt: `今天的课到这里，请帮我复盘：我这节课用对了什么、还差什么，然后给下一课的建议。`,
-    })
+    makeStep(
+      lessonId,
+      'wrapup',
+      i++,
+      '收束复盘',
+      '总结本课所得，给出下一课建议',
+      {
+        type: 'chat',
+        mode: 'tutor',
+        seedPrompt: `今天的课到这里，请帮我复盘：我这节课用对了什么、还差什么，然后给下一课的建议。`,
+      },
+      pace
+    )
   );
 
   return steps;
@@ -685,6 +1058,22 @@ export function buildFallbackScenario(lesson: Lesson): RoleplayScenario | undefi
       { id: 'lg2', description: '全程至少三个来回，不中途切换成中文解释', completed: false },
     ],
     usefulPhrases: [],
+  };
+}
+
+/** 根据课时已排定的词汇与句型骨架，结合可选自定义微主题，生成/刷新角色扮演设定 */
+export function buildCustomScenario(lesson: Lesson, customTopic?: string): RoleplayScenario | undefined {
+  const base = buildFallbackScenario(lesson);
+  if (!base) return undefined;
+  if (!customTopic || !customTopic.trim()) return base;
+  const topic = customTopic.trim();
+  return {
+    ...base,
+    id: `lesson-scenario-${lesson.id}-custom`,
+    title: `情境实战：${topic}`,
+    titleJp: base.titleJp || `シチュエーション：${topic}`,
+    description: `结合本课词汇与句型，围绕「${topic}」开展日常角色扮演演练。`,
+    initialMessage: `こんにちは！今日は「${topic}」について一緒に練習しましょう。準備はいいですか？`,
   };
 }
 
@@ -783,9 +1172,23 @@ export function applyLessonEvidence(lesson: Lesson, ctx: EvidenceContext = {}): 
         if (rounds < ROLEPLAY_MIN_ROUNDS) return step;
         return markDone(step, 'scenario-rounds');
       }
-      default:
-        // warmup / wrapup：没有可靠的自动采证通道，保留给学生自评
+      case 'warmup':
+      case 'wrapup': {
+        // 自然连贯推进：学生点击开启了热身或复盘，且会话中已有互动发生，自动标记完成
+        const rounds = lesson.sessionId ? ctx.sessionRoundCounts?.[lesson.sessionId] || 0 : 0;
+        if (step.startedAt && rounds >= 1) {
+          return markDone(step, 'material-taught');
+        }
         return step;
+      }
+      default: {
+        // 其他小测类步骤（非闪卡）：产生互动即可达成
+        const rounds = lesson.sessionId ? ctx.sessionRoundCounts?.[lesson.sessionId] || 0 : 0;
+        if (step.startedAt && rounds >= 1) {
+          return markDone(step, 'material-taught');
+        }
+        return step;
+      }
     }
   });
 
@@ -800,23 +1203,96 @@ export function applyLessonEvidence(lesson: Lesson, ctx: EvidenceContext = {}): 
 
 /**
  * 判断某一步是否"可自动采证"。
- * 界面据此决定给「我完成了」按钮还是显示「系统判定」，避免让学生误以为可以随手打勾。
+ * 界面据此展示采证说明
  */
 export function isAutoEvidenced(step: LessonStep): boolean {
   return step.kind !== 'warmup' && step.kind !== 'wrapup';
 }
 
-/** 证据渠道的中文说明，界面直接展示，让学生知道"凭什么算完成" */
+/** 证据渠道的中文说明，界面直接展示，让学生清晰了解进度依据 */
 export const EVIDENCE_LABELS: Record<LessonStepEvidence['via'], string> = {
-  // 这些字串会直接渲染在步骤下方（「完成依据：xxx」），必须是学生看得懂的话。
-  // 禁止写入字段名、表名、模块名或任何只有开发者才懂的词。
-  'material-taught': '本课内容已讲过',
+  'material-taught': '互动教学已完成',
   'word-collected': '已收进生词本',
   'grammar-collected': '已收进语法档案',
   flashcard: '闪卡已作答',
   'scenario-rounds': '演练已达标',
-  manual: '你自己确认的',
+  manual: '已完成',
 };
+
+export interface LevelRoadmapStage {
+  level: UserLevel;
+  levelTitle: string;
+  stageName: string;
+  badge: string;
+  color: string;
+  summary: string;
+  coreTargets: string[];
+  estimatedLessons: string;
+}
+
+/** JLPT 从初阶到高阶的完整学习脉络全景图 */
+export const JLPT_ROADMAP_STAGES: LevelRoadmapStage[] = [
+  {
+    level: 'N0',
+    levelTitle: '零基础启蒙',
+    stageName: '五十音与发音基石',
+    badge: '入门基石',
+    color: '#10b981',
+    summary: '建立假名听辨读写本能，扫清发音障碍，掌握生存破冰短句。',
+    coreTargets: ['平假名/片假名对照', '浊音/半浊音/长促音规则', '日常问候破冰'],
+    estimatedLessons: '16 课',
+  },
+  {
+    level: 'N5',
+    levelTitle: '初级入门',
+    stageName: '生存日语与句型骨架',
+    badge: '句型破冰',
+    color: '#06b6d4',
+    summary: '掌握基础词汇与判断/存在句型，能完成便利店购物、点餐、时间询问。',
+    coreTargets: ['基础助词（は/が/を/に/で）', '动词敬体ます形', '指示代词与数字日期'],
+    estimatedLessons: '约 20~25 课',
+  },
+  {
+    level: 'N4',
+    levelTitle: '初级进阶',
+    stageName: '动词活用与日常生活',
+    badge: '核心大关',
+    color: '#3b82f6',
+    summary: '攻破动词活用体系，自如表达许可、愿望、授受与日常见闻。',
+    coreTargets: ['て形/た形/ない形变形', '授受动词与请求句型', '简单复句与因果表达'],
+    estimatedLessons: '约 25~30 课',
+  },
+  {
+    level: 'N3',
+    levelTitle: '中级过渡',
+    stageName: '真实语境与长句表达',
+    badge: '会话分水岭',
+    color: '#8b5cf6',
+    summary: '跨入真正流利会话门槛。掌握可能态、被动态、使役态与近义表达。',
+    coreTargets: ['可能形/被动形/使役形', '初级敬语与语气词', '近义句型辨析与转折复句'],
+    estimatedLessons: '约 30~35 课',
+  },
+  {
+    level: 'N2',
+    levelTitle: '高级进阶',
+    stageName: '社会话题与地道流利',
+    badge: '商务与留学',
+    color: '#ec4899',
+    summary: '达到日本留学与外企职场门槛。顺畅阅读报刊评论，准确表达立场与推测。',
+    coreTargets: ['近义句型微差异辨析', '复合格助词与转折修辞', '职场邮件与社会生活场景'],
+    estimatedLessons: '约 35~40 课',
+  },
+  {
+    level: 'N1',
+    levelTitle: '高阶精通',
+    stageName: '文化底蕴与深度思辨',
+    badge: '无障碍母语感',
+    color: '#f59e0b',
+    summary: '理解抽象思辨、高级敬语体系内外尊卑、传统惯用语与新闻政论。',
+    coreTargets: ['高级敬语体系与内外视角', '文语残留与四字熟语', '新闻时事深度思辨讨论'],
+    estimatedLessons: '持续浸润',
+  },
+];
 
 /** 把学生手动标记的完成写进步骤（仅对无自动通道的步骤开放） */
 export function markStepManually(lesson: Lesson, stepId: string): Lesson {

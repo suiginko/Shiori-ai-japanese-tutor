@@ -68,9 +68,14 @@ export interface UserLearningProfile {
   notesForAI: string; // Dynamic AI memory
   /** 学习目标取向（缺省视为 jlpt），驱动取材与验收方式 */
   goal?: LearningGoal;
+  /** 学习节奏：微课(~15m) / 标准(~25m) / 冲刺(~40m) */
+  studyPace?: StudyPace;
   /** 分轴能力画像（由采证派生，勿手工填） */
   axes?: AbilityAxes;
 }
+
+/** 学习节奏类型：微课 / 标准 / 冲刺 */
+export type StudyPace = 'light' | 'standard' | 'intensive';
 
 /**
  * @deprecated 旧「每日任务清单」实体。
@@ -216,6 +221,8 @@ export interface LessonItems {
     level?: string;
     isNew: boolean;
     reason?: string;
+    /** 前置语法依赖（如动词て形变形等） */
+    prerequisites?: string[];
   }>;
   /**
    * 情境脚本（取代"课文"）：神态旁白 + 角色台词 + 译文点拨。
@@ -564,9 +571,42 @@ export interface KanaItem {
   romaji: string;
   row: string;
   col: string;
-  type: 'seion' | 'dakuon' | 'yoon';
+  type: 'seion' | 'dakuon' | 'yoon' | 'special';
   chineseMnemonic: string;
   pronunciationTip: string;
+  altRomaji?: string[]; // 常见的备选罗马字写法，如 si/shi, ti/chi, tu/tsu, hu/fu
+  keystrokes?: string[]; // 26键键盘标准及快捷输入法按键，如 ['shi', 'si']
+}
+
+/** 发音知识专题卡片 */
+export interface PronunciationTopic {
+  id: string;
+  title: string;
+  subtitle: string;
+  iconType: string;
+  tag: string;
+  summary: string;
+  coreRule: string;
+  examples: Array<{
+    word: string;
+    reading: string;
+    romaji: string;
+    meaning: string;
+    note?: string;
+  }>;
+  audioText?: string;
+  practicalTips: string[];
+}
+
+/** 打字练习题目条目 */
+export interface TypingDrillItem {
+  id: string;
+  word: string; // 展示词，如 "きって" 或 "パーティー"
+  reading: string; // 假名读音
+  kanjiMeaning?: string; // 中文释义，如 "邮票"
+  validKeys: string[]; // 允许的罗马字输入方案（如 ["kitte", "ki-xtsu-te", "ki-ltsu-te"]）
+  category: 'basic' | 'yoon' | 'sokuon' | 'katakana' | 'daily';
+  tip?: string;
 }
 
 export interface PersonaPreset {

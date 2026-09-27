@@ -110,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="brand-title">
               <span className="brand-name-text">栞 (Shiori)</span>
               <span className="brand-title-sub">AI 智能老师</span>
-              <span className="brand-version-badge">v0.2.0</span>
+              <span className="brand-version-badge">v0.2.1</span>
             </div>
             <span className="brand-tagline">日文自然语言沉浸式伴学系统</span>
           </div>
@@ -118,14 +118,6 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right: Auxiliary Toggles, User Progress & Settings */}
         <div className="header-controls-right">
-          {/* User Progress & Level Badge */}
-          <div className="header-user-status">
-            <button className="level-badge-pill" onClick={onOpenPlan} title="点击查看 AI 自主学习计划与能力诊断">
-              <span className="level-tag">{profile.level}</span>
-              <span className="level-desc">{profile.levelLabel}</span>
-              <span className="level-edit-hint">计划 &gt;</span>
-            </button>
-          </div>
 
           {/* Furigana Display Toggle: 统一深灰色样式，无黄色刺眼高亮 */}
           <button
@@ -150,8 +142,13 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="icon-label">五十音</span>
           </button>
 
-          <button className="header-icon-btn header-btn-plan" onClick={onOpenPlan} title="AI 自主学习规划与诊断">
-            <Calendar size={16} />
+          <button
+            className="header-icon-btn header-btn-plan"
+            onClick={onOpenPlan}
+            title="打开学习计划：AI 自主学习规划与能力诊断"
+            aria-label="打开学习计划"
+          >
+            <Calendar size={16} aria-hidden="true" />
             <span className="icon-label">学习计划</span>
           </button>
 

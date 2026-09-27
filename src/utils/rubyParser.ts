@@ -189,10 +189,43 @@ export function decomposeSurface(rawSurface: string, rawReading: string) {
     };
   }
 
-  const leading = rawSurface.substring(0, match.index);
-  const kanjiStem = match[1];
+  let leading = rawSurface.substring(0, match.index);
+  let kanjiStem = match[1];
   const trailingKana = match[2];
   let cleanReading = rawReading;
+
+  // 智能宿主前缀汉字切分保护：
+  // 当 AI 输出前置中文与日文紧贴时（如 "我買[かい]ました"、"或者限定[げんてい]"），
+  // 防止将前面的中文字符一并吞入宿主：
+  if (kanjiStem.length > 1) {
+    for (const stop of COMMON_CHINESE_STOPWORDS) {
+      if (stop.length >= 2 && kanjiStem.startsWith(stop) && kanjiStem.length > stop.length) {
+        leading += stop;
+        kanjiStem = kanjiStem.substring(stop.length);
+        break;
+      }
+    }
+    const selfDict = DICT_BY_WORD.get(kanjiStem);
+    const selfPitch = COMMON_PITCH_DICT[kanjiStem];
+    const selfReading = selfDict?.reading || selfPitch?.reading;
+    if (selfReading !== cleanReading) {
+      for (let k = 1; k < kanjiStem.length; k++) {
+        const candidateStem = kanjiStem.substring(k);
+        const dictItem = DICT_BY_WORD.get(candidateStem);
+        const pitchItem = COMMON_PITCH_DICT[candidateStem];
+        const matchReading = dictItem?.reading || pitchItem?.reading;
+        if (
+          matchReading &&
+          (matchReading === cleanReading ||
+            (trailingKana && (matchReading + trailingKana === cleanReading || cleanReading.startsWith(matchReading))))
+        ) {
+          leading += kanjiStem.substring(0, k);
+          kanjiStem = candidateStem;
+          break;
+        }
+      }
+    }
+  }
 
   // 若读音开头包含前置假名，剥离之（如 "ぜひ教" 的读音 "ぜひおしえ" -> "おしえ"）
   if (leading && cleanReading.startsWith(leading)) {
@@ -751,9 +784,9 @@ export function splitStemAndOkurigana(
   // 汉字与假名前后缀安全解构：绝对杜绝 leadingPlain（如 "カレーを"、"部屋の"）留在 surface 中！
   const decomp = decomposeSurface(rawSurface, rawReading);
 
-  // 汉字-假名-汉字复合词保护（如 "昼ご飯"、"夏休み"）：前置部分含汉字时不得剥离，
-  // 否则会丢失前半汉字（"昼ご"）；应作为整词注音，而非只拆出末位汉字
-  if (decomp.leadingPlain && /[一-龯々〆]/.test(decomp.leadingPlain)) {
+  // 汉字-假名-汉字复合词保护（如 "昼ご飯"、"夏休み"）：前置部分含汉字且含假名时不得剥离，
+  // 否则会丢失前半汉字（"昼ご"）；纯汉字前缀（如 "或者限定"）属无关前缀，允许剥离
+  if (decomp.leadingPlain && /[一-龯々〆]/.test(decomp.leadingPlain) && /[ぁ-んァ-ヶー]/.test(decomp.leadingPlain)) {
     return {
       surface: rawSurface,
       reading: rawReading,
@@ -1305,11 +1338,69 @@ function scanPlainStringForQueriedTerms(
   }
 }
 
-// 标签外普通文本（中文说明、用户发言等）：不被 <jp> 包裹的即是中文，所以不需要被注音，
-// 且不自动匹配已进入词典的词，仅保留手动在此处查询过的词赋予虚线点击交互。
+// 标签外普通文本（中文说明、动作旁白、括号内文字、用户发言等）：
+// 1. 优先容错识别其中可能包含的显式注音（如 食べる[たべる]、限定[げんてい]、{品物[しなもの]} 等），
+//    确保即使 AI 漏掉 <jp> 标签或未写外层花括号 {}，裸方括号注音也能被智能渲染为 ruby 样式用以兜底。
+// 2. 显式注音之外的普通文字不自动给平文汉字加振假名（保持中文与普通版面干净），
+//    仅保留手动划选查询过的词条赋予虚线点击交互。
 function annotatePlainText(text: string, tokens: RubyToken[], ctx: AnnotationContext) {
   if (!text) return;
-  scanPlainStringForQueriedTerms(text, tokens, ctx);
+
+  const processed = cleanOrphanedRubyBrackets(text);
+
+  // 显式注音匹配：优先花括号宿主块，兜底裸方括号（方括号内必须是纯假名或带声调，宿主含汉字）
+  const explicitPattern = /\{([^{}\[\]]+?)\s*\[\s*([^\]{}]+?)\s*\]\s*([ぁ-んァ-ヶー]{0,16}?)\}|([一-龯々〆ヵヶぁ-んァ-ヶーa-zA-Z0-9]*[一-龯々〆][一-龯々〆ヵヶぁ-んァ-ヶーa-zA-Z0-9]*)\s*\[\s*([ぁ-んァ-ヶー]+)\s*(?:\|\s*(\d+)\s*)?\]/g;
+
+  if (!explicitPattern.test(processed)) {
+    scanPlainStringForQueriedTerms(processed, tokens, ctx);
+    return;
+  }
+
+  explicitPattern.lastIndex = 0;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = explicitPattern.exec(processed)) !== null) {
+    const matchStart = match.index;
+    const matchEnd = explicitPattern.lastIndex;
+
+    const plainBefore = matchStart > lastIndex ? processed.substring(lastIndex, matchStart) : '';
+    if (plainBefore) {
+      scanPlainStringForQueriedTerms(plainBefore, tokens, ctx);
+    }
+
+    const isBraced = match[1] !== undefined;
+    const rawSurface = isBraced ? match[1] : match[4];
+    let rawReading = isBraced ? match[2] : match[5];
+    let explicitPitch: number | undefined = undefined;
+
+    if (isBraced) {
+      const pitchMatch = rawReading.match(/^(.*?)\s*\|\s*(\d+)\s*$/);
+      if (pitchMatch) {
+        rawReading = pitchMatch[1];
+        explicitPitch = parseInt(pitchMatch[2], 10);
+      }
+    } else if (match[6] !== undefined) {
+      explicitPitch = parseInt(match[6], 10);
+    }
+
+    const consumedEnd = emitExplicitRuby(
+      processed,
+      tokens,
+      ctx,
+      rawSurface,
+      rawReading,
+      explicitPitch,
+      matchEnd
+    );
+
+    lastIndex = consumedEnd;
+    explicitPattern.lastIndex = consumedEnd;
+  }
+
+  if (lastIndex < processed.length) {
+    scanPlainStringForQueriedTerms(processed.substring(lastIndex), tokens, ctx);
+  }
 }
 
 // <jp> 标签内的纯日文片段：统一扫描显式注音 + 平文自动注音

@@ -4,7 +4,7 @@ const { execSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
-const version = pkg.version || '0.2.0';
+const version = pkg.version || '0.2.1';
 const releaseDir = path.join(rootDir, 'release', 'Shiori-AI-Japanese-Tutor');
 const zipFile = path.join(rootDir, `Shiori-AI-Japanese-Tutor_v${version}.zip`);
 const cnZipFile = path.join(rootDir, `栞-Shiori-AI日语私教_v${version}.zip`);
