@@ -149,10 +149,8 @@ async function main() {
 
   const rootDir = path.resolve(__dirname, '..');
   const assets = [
-    { file: 'Shiori-AI-Japanese-Tutor_v0.2.1.apk', type: 'application/vnd.android.package-archive' },
-    { file: '栞-Shiori-AI_v0.2.1.apk', type: 'application/vnd.android.package-archive' },
-    { file: 'Shiori-AI-Japanese-Tutor_v0.2.1.zip', type: 'application/zip' },
-    { file: '栞-Shiori-AI日语私教_v0.2.1.zip', type: 'application/zip' }
+    { file: `Shiori-AI-Japanese-Tutor_${tag}.apk`, type: 'application/vnd.android.package-archive' },
+    { file: `Shiori-AI-Japanese-Tutor_${tag}.zip`, type: 'application/zip' }
   ];
 
   console.log('2. 正在上传构建附件...');

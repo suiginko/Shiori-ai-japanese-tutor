@@ -7,7 +7,6 @@ const pkg = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8
 const version = pkg.version || '0.2.1';
 const releaseDir = path.join(rootDir, 'release', 'Shiori-AI-Japanese-Tutor');
 const zipFile = path.join(rootDir, `Shiori-AI-Japanese-Tutor_v${version}.zip`);
-const cnZipFile = path.join(rootDir, `栞-Shiori-AI日语私教_v${version}.zip`);
 
 console.log('1. 清理旧 release 目录与压缩包...');
 if (fs.existsSync(releaseDir)) {
@@ -76,11 +75,7 @@ console.log('4. 正在压缩为 zip 压缩包 (PowerShell Compress-Archive)...')
 const psCommand = `powershell -NoProfile -Command "Compress-Archive -Path '${releaseDir}' -DestinationPath '${zipFile}' -Force"`;
 execSync(psCommand, { stdio: 'inherit' });
 
-console.log('5. 复制中文命名的压缩包以方便国内用户识别...');
-fs.copyFileSync(zipFile, cnZipFile);
-
 const stats = fs.statSync(zipFile);
 console.log(`\n🎉 打包完成！`);
-console.log(`压缩包文件1: ${zipFile}`);
-console.log(`压缩包文件2: ${cnZipFile}`);
+console.log(`压缩包文件: ${zipFile}`);
 console.log(`文件大小: ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
